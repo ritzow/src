@@ -6,7 +6,7 @@
 USE_FORT?= yes	# network server
 
 PROG=	inetd
-SRCS=	inetd.c
+SRCS=	inetd.c parse_v2.c
 MAN=	inetd.8
 MLINKS=	inetd.8 inetd.conf.5
 
