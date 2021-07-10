@@ -420,7 +420,7 @@ main(int argc, char *argv[])
 			rlim_ofile_cur = OPEN_MAX;
 	}
 
-	for (n = 0; n < (int)A_CNT(my_signals); n++) {
+	for (n = 0; n < (int)__arraycount(my_signals); n++) {
 		int	signum;
 
 		signum = my_signals[n];
@@ -446,7 +446,7 @@ main(int argc, char *argv[])
 			config_root();
 		}
 
-		n = my_kevent(changebuf, changes, eventbuf, A_CNT(eventbuf));
+		n = my_kevent(changebuf, changes, eventbuf, __arraycount(eventbuf));
 		changes = 0;
 
 		for (ev = eventbuf; n > 0; ev++, n--) {
@@ -532,7 +532,7 @@ spawn(struct servtab *sep, int ctrl)
 		if (pid == 0) {
 			size_t	n;
 
-			for (n = 0; n < A_CNT(my_signals); n++)
+			for (n = 0; n < __arraycount(my_signals); n++)
 				(void) signal(my_signals[n], SIG_DFL);
 			if (debug)
 				setsid();
@@ -1203,7 +1203,7 @@ endconfig(void)
 	ERR("Exiting %s early. Some services will be unavailable", CONFIG)
 
 #define LOG_TOO_FEW_ARGS() \
-	ERR0("Expected more arguments")
+	ERR("Expected more arguments")
 
 /* Parse the next service and apply any directives, and returns it as servtab */
 static struct servtab *
@@ -2222,8 +2222,8 @@ my_kevent(const struct kevent *changelist, size_t nchanges,
 static struct kevent *
 allocchange(void)
 {
-	if (changes == A_CNT(changebuf)) {
-		(void) my_kevent(changebuf, A_CNT(changebuf), NULL, 0);
+	if (changes == __arraycount(changebuf)) {
+		(void) my_kevent(changebuf, __arraycount(changebuf), NULL, 0);
 		changes = 0;
 	}
 
@@ -2448,10 +2448,10 @@ init_servtab() {
 		 * Set se_max to non-zero so uninitialized value is not
 	 	 * a valid value. Useful in v2 syntax parsing. 
 		 */
-		.se_service_max = SE_SERVICE_MAX_UNINIT,
-		.se_ip_max = SE_IP_MAX_UNINIT,
-		.se_wait = SE_WAIT_UNINIT,
-		.se_socktype = SE_SOCKTYPE_UNINIT
+		.se_service_max = SERVTAB_UNSPEC_VAL,
+		.se_ip_max = SERVTAB_UNSPEC_VAL,
+		.se_wait = SERVTAB_UNSPEC_VAL,
+		.se_socktype = SERVTAB_UNSPEC_VAL
 		/* All other fields initialized to 0 or null */
 	};
 }
@@ -2536,7 +2536,7 @@ read_glob_configs(char *pattern) {
 			/* No glob errors */
 			break;
 		case GLOB_ABORTED:
-			ERR0("Error while searching for include files");
+			ERR("Error while searching for include files");
 			break;
 		case GLOB_NOMATCH:
 			/* It's fine if no files were matched. */
@@ -2595,8 +2595,6 @@ include_matched_path(char *glob_path)
 			free(glob_path);
 			glob_path = tmp;
 		}
-
-
 	} else {
 		if (debug) {
 			printf("'%s' is not a file.\n", glob_path);

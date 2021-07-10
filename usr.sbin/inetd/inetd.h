@@ -24,26 +24,20 @@
 #define MUX_TYPE	1
 #define MUXPLUS_TYPE	2
 #define FAITH_TYPE	3
-#define ISMUX(sep)	(((sep)->se_type == MUX_TYPE) || \
-			 ((sep)->se_type == MUXPLUS_TYPE))
 #define ISMUXPLUS(sep)	((sep)->se_type == MUXPLUS_TYPE)
+#define ISMUX(sep)	(((sep)->se_type == MUX_TYPE) || ISMUXPLUS(sep))
 
-#define	A_CNT(a)	(sizeof (a) / sizeof (a[0]))
 #define	TOOMANY		40		/* don't start more than TOOMANY */
 
 #define CONF_ERROR_FMT "%s line %zu: "
 
 /* Log warning/error with 0 or variadic args with line number and file name */
-#define IL0(prio, msg) syslog(prio, CONF_ERROR_FMT msg ".", \
-	CONFIG, line_number)
 
-#define ILV(prio, msg, args...) syslog(prio, CONF_ERROR_FMT msg ".", \
-	CONFIG, line_number, args)
+#define ILV(prio, msg, ...) syslog(prio, CONF_ERROR_FMT msg ".", \
+	CONFIG, line_number __VA_OPT__(,) __VA_ARGS__)
 
-#define WRN0(msg) IL0(LOG_WARNING, msg)
-#define ERR0(msg) IL0(LOG_ERR, msg)
-#define WRN(msg, args...) ILV(LOG_WARNING, msg, args)
-#define ERR(msg, args...) ILV(LOG_ERR, msg, args)
+#define WRN(msg, ...) ILV(LOG_WARNING, msg __VA_OPT__(,) __VA_ARGS__)
+#define ERR(msg, ...) ILV(LOG_ERR, msg __VA_OPT__(,) __VA_ARGS__)
 
 struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
@@ -120,9 +114,6 @@ extern char *defhost;
 extern char *policy;
 
 /* "Unspecified" indicator value for servtabs (mainly used by v2 syntax) */
-#define SE_SERVICE_MAX_UNINIT -1
-#define SE_IP_MAX_UNINIT -1
-#define SE_WAIT_UNINIT -1
-#define SE_SOCKTYPE_UNINIT -1
+#define SERVTAB_UNSPEC_VAL -1
 
 #endif
