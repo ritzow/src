@@ -307,10 +307,10 @@ static struct kevent *	allocchange(void);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
 static struct servtab init_servtab(void);
-static int 	rl_process(struct servtab *sep, int ctrl);
-static struct se_ip_list_node* rl_add(struct servtab* sep, char* ip);
-static void	rl_reset(struct servtab *sep, struct timeval *now);
-static struct se_ip_list_node* rl_try_get_ip(struct servtab* sep, char* ip);
+static int 	rl_process(struct servtab *, int);
+static struct se_ip_list_node *	rl_add(struct servtab *, char *);
+static void	rl_reset(struct servtab *, struct timeval *);
+static struct se_ip_list_node *	rl_try_get_ip(struct servtab *, char *);
 static void include_configs(char *);
 static int glob_error(const char *, int);
 static void read_glob_configs(char *);
@@ -2522,7 +2522,7 @@ prepare_next_config(const char *file_name)
 static void
 read_glob_configs(char *pattern) {
 	glob_t results;
-	char * full_pattern;
+	char *full_pattern;
 	int glob_result;
 	full_pattern = gen_file_pattern(CONFIG, pattern);
 
@@ -2634,7 +2634,7 @@ check_no_reinclude(const char *glob_path)
 
 /* Resolve the pattern relative to the config file the pattern is from  */
 static char * 
-gen_file_pattern(const char * cur_config, const char * pattern)
+gen_file_pattern(const char *cur_config, const char *pattern)
 {
 	if(pattern[0] == '/') {
 		/* Absolute paths don't need any normalization */
@@ -2654,7 +2654,7 @@ gen_file_pattern(const char * cur_config, const char * pattern)
 			return newstr(pattern);
 		} else {
 			/* Relativize pattern to cur_config file's directory */
-			char * full_pattern = malloc(last + 1 + strlen(pattern) + 1);
+			char *full_pattern = malloc(last + 1 + strlen(pattern) + 1);
 			memcpy(full_pattern, cur_config, last);
 			full_pattern[last] = '/';
 			strcpy(&full_pattern[last + 1], pattern);
@@ -2876,9 +2876,9 @@ rl_reset(struct servtab *sep, struct timeval *now)
 	}
 }
 
-static struct se_ip_list_node*
-rl_try_get_ip(struct servtab *sep, char* ip){
-	struct se_ip_list_node* curr = sep->se_ip_list_head; 
+static struct se_ip_list_node *
+rl_try_get_ip(struct servtab *sep, char *ip){
+	struct se_ip_list_node *curr = sep->se_ip_list_head; 
 
 	if (debug) {
 		fprintf(stderr,

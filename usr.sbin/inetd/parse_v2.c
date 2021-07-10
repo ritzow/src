@@ -16,7 +16,7 @@ typedef enum values_state
 
 /* Values parsing state */
 typedef struct val_parse_info {
-	char* cp;
+	char *cp;
 	/* Used so we can null-terminate values by overwriting ',' and ';' */
 	//char terminal;
 	values_state state;
@@ -133,7 +133,7 @@ parse_syntax_v2(struct servtab *sep, char **cpp)
 		case INVOKE_FINISH:
 			/* Found a semicolon, do final checks and defaults and return. */
 			/* Skip whitespace after semicolon to end of line. */
-			while (**cpp == ' ' || **cpp == '\t') {
+			while (isspace((unsigned char)**cpp)) {
 				(*cpp)++;
 			}
 
@@ -170,11 +170,11 @@ parse_syntax_v2(struct servtab *sep, char **cpp)
  * Return true on success, false on failure. 
  */
 static bool 
-fill_default_values(struct servtab * sep) {
+fill_default_values(struct servtab *sep) {
 
 	bool is_valid = true;
 
-	if (sep->se_service_max == SE_SERVICE_MAX_UNINIT) {
+	if (sep->se_service_max == SERVTAB_UNSPEC_VAL) {
 		/* Set default to same as in v1 syntax. */
 		sep->se_service_max = TOOMANY;
 	}
@@ -191,13 +191,13 @@ fill_default_values(struct servtab * sep) {
 		is_valid = setup_internal(sep) && is_valid;
 	}
 
-	if (sep->se_socktype == SE_SOCKTYPE_UNINIT) {
+	if (sep->se_socktype == SERVTAB_UNSPEC_VAL) {
 		/* Ensure socktype is specified (either set or inferred) */
 		ENI("socktype");
 		is_valid = false;
 	}
 
-	if (sep->se_wait == SE_WAIT_UNINIT) {
+	if (sep->se_wait == SERVTAB_UNSPEC_VAL) {
 		/* Ensure wait is specified */
 		ENI("wait");
 		is_valid = false;
@@ -226,12 +226,12 @@ fill_default_values(struct servtab * sep) {
 /* fill_default_values related functions */
 #ifdef IPSEC
 static void
-setup_ipsec(struct servtab * sep)
+setup_ipsec(struct servtab *sep)
 {
 	if (sep->se_policy == NULL) {
 		/* Set to default global policy */
 		sep->se_policy = policy;
-	} else if (strlen(sep->se_policy) == 0) {
+	} else if (*sep->se_policy == '\0') {
 		/* IPsec was intentionally disabled. */
 		free(sep->se_policy);
 		sep->se_policy = NULL;
@@ -240,27 +240,29 @@ setup_ipsec(struct servtab * sep)
 #endif
 
 static void
-try_infer_socktype(struct servtab * sep) {
-	if (sep->se_socktype == SE_SOCKTYPE_UNINIT) {
-		/* Check values of se_proto udp, udp6, tcp, tcp6 to set dgram/stream */
-		if (sep->se_proto != NULL) {
-			if (strncmp(sep->se_proto, "udp", 3) == 0) {
-				sep->se_socktype = SOCK_DGRAM;
-			} else if (strncmp(sep->se_proto, "tcp", 3) == 0) {
-				sep->se_socktype = SOCK_STREAM;
-			}
-		}
+try_infer_socktype(struct servtab *sep) {
+	if (sep->se_socktype != SERVTAB_UNSPEC_VAL || sep->se_proto == NULL) {
+		return;
+	}
+
+	/* Check values of se_proto udp, udp6, tcp, tcp6 to set dgram/stream */
+	if (strncmp(sep->se_proto, "udp", 3) == 0) {
+		sep->se_socktype = SOCK_DGRAM;
+	} else if (strncmp(sep->se_proto, "tcp", 3) == 0) {
+		sep->se_socktype = SOCK_STREAM;
 	}
 }
 
 static bool
-setup_internal(struct servtab * sep)
+setup_internal(struct servtab *sep)
 {
 	pid_t wait_prev = sep->se_wait;
 	if (parse_server(sep, "internal") != 0) {
 		ENI("exec");
 		return false;
-	} else if (wait_prev != SE_WAIT_UNINIT && wait_prev != sep->se_wait) {
+	}
+	
+	if (wait_prev != SERVTAB_UNSPEC_VAL && wait_prev != sep->se_wait) {
 		/* If wait was already specified throw an error. */
 		WRN(WAIT_WRN, sep->se_service, (sep->se_wait ? "yes" : "no"));
 	}
@@ -272,21 +274,26 @@ infer_protocol_ip_version(struct servtab *sep)
 {
 	struct in_addr tmp;
 
-	if (strcmp("tcp", sep->se_proto) == 0
-		|| strcmp("udp", sep->se_proto) == 0
-		|| strcmp("rpc/tcp", sep->se_proto) == 0
-		|| strcmp("rpc/udp", sep->se_proto) == 0) {
-
-		if (inet_pton(AF_INET6, sep->se_hostaddr, &tmp)) {
-			sep->se_family = AF_INET6;
-		} else if (!inet_pton(AF_INET, sep->se_hostaddr, &tmp)) {
-			ERR("Address family of %s is ambigous or invalid. "
-				"Explicitly specify protocol", sep->se_hostaddr);
-			return false;
-		}
+	if (strcmp("tcp", sep->se_proto) != 0
+		&& strcmp("udp", sep->se_proto) != 0
+		&& strcmp("rpc/tcp", sep->se_proto) != 0
+		&& strcmp("rpc/udp", sep->se_proto) != 0) {
+		return true;
 	}
 	
-	return true;
+	if (inet_pton(AF_INET, sep->se_hostaddr, &tmp)) {
+		sep->se_family = AF_INET;
+		return true;
+	}
+
+	if (inet_pton(AF_INET6, sep->se_hostaddr, &tmp)) {
+		sep->se_family = AF_INET6;
+		return true;
+	}
+
+	ERR("Address family of %s is ambigous or invalid. "
+		"Explicitly specify protocol", sep->se_hostaddr);
+	return false;
 }
 
 /* 
@@ -301,7 +308,7 @@ skip_whitespace(char **cpp) {
 	int line_start = line_number;
 	
 	for (;;) {
-		while (isblank((int)*cp))
+		while (isblank((unsigned char)*cp))
 			cp++;
 
 		if (*cp == '\0' || *cp == '#') {  
@@ -312,8 +319,9 @@ skip_whitespace(char **cpp) {
 				ERR("Early end of file after line %d", line_start); 
 				return false;
 			}
-
-		} else break;
+			continue;
+		}
+		break;
 	}
 
 	*cpp = cp;
@@ -322,9 +330,9 @@ skip_whitespace(char **cpp) {
 
 /* Get the key handler function pointer for the given name */
 static key_handler_func 
-get_handler(char * name) {
+get_handler(char *name) {
 	/* Call function to handle option parsing. */
-	for(unsigned int i = 0; i < A_CNT(key_handlers); i++) {
+	for(size_t i = 0; i < __arraycount(key_handlers); i++) {
 		if (strcmp(key_handlers[i].name, name) == 0) {
 			return key_handlers[i].handler;
 		}
@@ -351,14 +359,14 @@ parse_quotes(char **cpp) {
 				memmove(cp, cp+1, strlen(cp)); 
 		} else if (*cp == '\\') {
 			/* start is location of backslash */
-			char* start = cp;
+			char *start = cp;
 			int count_read;
 			cp++;
 			switch (*cp) {
 			case 'x':
 				sscanf(cp+1, "%2hhx%n", start, &count_read);
 				if (count_read == 0) {
-					ERR0("Expected hexadecimal value after \\x");
+					ERR("Expected hexadecimal value after \\x");
 					return false;
 				}
 				memmove(cp, cp + count_read + 1, strlen(cp));
@@ -388,7 +396,7 @@ parse_quotes(char **cpp) {
 				memmove(cp, cp+1, strlen(cp));
 				break;
 			case '\0':
-				ERR0("Dangling escape sequence backslash");
+				ERR("Dangling escape sequence backslash");
 				return false;
 			default:
 				ERR("Unknown escape sequence '\\%c'", *cp);
@@ -400,7 +408,7 @@ parse_quotes(char **cpp) {
 	}
 
 	if (*cp == '\0' && quote) {
-		ERR0("Unclosed quote");
+		ERR("Unclosed quote");
 		return false;
 	}
 	*cpp = cp;
@@ -415,7 +423,7 @@ parse_quotes(char **cpp) {
 static char * 
 next_value(vlist list) {
 
-	char* cp = list->cp;
+	char *cp = list->cp;
 	
 	if (list->state != VALS_PARSING) {
 		/* Already at the end of a values list, or there was an error. */
@@ -445,7 +453,7 @@ next_value(vlist list) {
 	 * past the end of the value. 
 	 */
 	char * start = cp;
-	while (!isblank((int)*cp) && *cp != '#' && 
+	while (!isblank((unsigned char)*cp) && *cp != '#' && 
 		*cp != ',' && *cp != ';' && *cp != '\0' ) {
 		if (*cp == '"' || *cp == '\'') {
 			/* Found a quoted segment */
@@ -470,24 +478,24 @@ next_value(vlist list) {
 		/* Value ends with end of line, so it is already null terminated */
 		list->cp = cp;
 		return start;
-	} else {
-		if (*cp == ',') {
-			list->state = VALS_END_KEY;
-		} else if (*cp == ';') {
-			list->state = VALS_END_DEF;
-		}
-		*cp = '\0';
-		/* Advance past null so we don't skip the rest of the line */
-		list->cp = cp + 1;
-		return start;
-	} 
+	}
+
+	if (*cp == ',') {
+		list->state = VALS_END_KEY;
+	} else if (*cp == ';') {
+		list->state = VALS_END_DEF;
+	}
+
+	*cp = '\0';
+	/* Advance past null so we don't skip the rest of the line */
+	list->cp = cp + 1;
+	return start;
 }
 
 /* Parse key name and invoke associated handler */
 static invoke_result
 parse_invoke_handler(bool *is_valid_definition, char **cpp, struct servtab *sep)
 {
-
 	char *key_name, save, *cp = *cpp;
 	int is_blank;
 	key_handler_func handler;
@@ -503,11 +511,11 @@ parse_invoke_handler(bool *is_valid_definition, char **cpp, struct servtab *sep)
 
 		
 	/* alphabetical or underscore allowed in name */
-	while (isalpha((int)*cp) || *cp == '_') {
+	while (isalpha((unsigned char)*cp) || *cp == '_') {
 		cp++;
 	}
 		
-	is_blank = isblank((int)*cp);
+	is_blank = isblank((unsigned char)*cp);
 
 	/* Get key handler and move to start of values */
 	if (*cp != '=' && !is_blank && *cp != '#') {
@@ -594,14 +602,14 @@ unknown_handler(struct servtab *sep, vlist values)
 
 /* Set listen address for this service */
 static hresult 
-bind_handler(struct servtab * sep, vlist values) 
+bind_handler(struct servtab *sep, vlist values) 
 {
 	if (sep->se_hostaddr != NULL) {
 		TMD("bind");
 		return KEY_HANDLER_FAILURE;
 	}
 
-	char* val = next_value(values);
+	char *val = next_value(values);
 	sep->se_hostaddr = newstr(val);
 	if (next_value(values) != NULL) {
 		TMA("bind");
@@ -611,9 +619,9 @@ bind_handler(struct servtab * sep, vlist values)
 }
 
 static hresult 
-socket_type_handler(struct servtab * sep, vlist values)
+socket_type_handler(struct servtab *sep, vlist values)
 {
-	char* type = next_value(values);
+	char *type = next_value(values);
 	if (type == NULL) {
 		TFA("socktype");
 		return KEY_HANDLER_FAILURE;
@@ -636,13 +644,13 @@ socket_type_handler(struct servtab * sep, vlist values)
 
 /* Set accept filter SO_ACCEPTFILTER */
 static hresult 
-filter_handler(struct servtab * sep, vlist values)
+filter_handler(struct servtab *sep, vlist values)
 {
 	/* 
 	 * See: SO_ACCEPTFILTER https://man.netbsd.org/setsockopt.2
 	 * An accept filter can have one other argument.
 	 * This code currently only supports one accept filter
-	 * Also see parse_accept_filter(char* arg, struct servtab* sep) 
+	 * Also see parse_accept_filter(char* arg, struct servtab*sep) 
 	 */
 
 	char *af_name, *af_arg;
@@ -675,7 +683,7 @@ filter_handler(struct servtab * sep, vlist values)
 
 /* Set protocol (udp, tcp, unix, etc.) */
 static hresult 
-protocol_handler(struct servtab * sep, vlist values)
+protocol_handler(struct servtab *sep, vlist values)
 {
 	char *val;
 
@@ -706,7 +714,7 @@ protocol_handler(struct servtab * sep, vlist values)
  * Based on MALFORMED, GETVAL, and ASSIGN in getconfigent(void).
  */
 static int
-size_to_bytes(char* arg) {
+size_to_bytes(char *arg) {
 	char *tail;
 
 	errno = 0;
@@ -738,7 +746,7 @@ size_to_bytes(char* arg) {
 
 /* sndbuf size */
 static hresult 
-send_buf_handler(struct servtab * sep, vlist values)
+send_buf_handler(struct servtab *sep, vlist values)
 {
 	char *arg;
 	int buffer_size;
@@ -773,7 +781,7 @@ send_buf_handler(struct servtab * sep, vlist values)
 
 /* recvbuf size */
 static hresult 
-recv_buf_handler(struct servtab * sep, vlist values)
+recv_buf_handler(struct servtab *sep, vlist values)
 {
 	char *arg;
 	int buffer_size;
@@ -808,14 +816,14 @@ recv_buf_handler(struct servtab * sep, vlist values)
 
 /* Same as wait in positional */
 static hresult 
-wait_handler(struct servtab * sep, vlist values)
+wait_handler(struct servtab *sep, vlist values)
 {
 	char *val;
 	int wait;
 
 	/* If 'wait' is specified after internal exec */
 
-	if (!is_internal(sep) && sep->se_wait != SE_WAIT_UNINIT) {
+	if (!is_internal(sep) && sep->se_wait != SERVTAB_UNSPEC_VAL) {
 		/* Prevent duplicate wait keys */
 		TMD("wait");
 		return KEY_HANDLER_FAILURE;
@@ -833,7 +841,7 @@ wait_handler(struct servtab * sep, vlist values)
 	} else if (strcmp(val, "no") == 0) {
 		wait = false;
 	} else {
-		ERR0("Invalid option for wait. Valid: yes, no");
+		ERR("Invalid option for wait. Valid: yes, no");
 		return KEY_HANDLER_FAILURE;
 	}
 
@@ -854,13 +862,13 @@ wait_handler(struct servtab * sep, vlist values)
 
 /* Set max connections in interval rate-limit, same as max in positional */
 static hresult 
-service_max_handler(struct servtab * sep, vlist values)
+service_max_handler(struct servtab *sep, vlist values)
 {
-	if(sep->se_service_max != SE_SERVICE_MAX_UNINIT) {
+	if(sep->se_service_max != SERVTAB_UNSPEC_VAL) {
 		TMD("service_max");
 		return KEY_HANDLER_FAILURE;
 	}
-	char* count_str = next_value(values);
+	char *count_str = next_value(values);
 
 	if(count_str == NULL) {
 		TFA("service_max");
@@ -868,7 +876,7 @@ service_max_handler(struct servtab * sep, vlist values)
 	}
 
 	/* TODO need to figure out difference between v1 and v2 */
-	char* tail;
+	char *tail;
 	errno = 0;
 	long count = strtol(count_str, &tail, 10);
 
@@ -889,20 +897,20 @@ service_max_handler(struct servtab * sep, vlist values)
 }
 
 static hresult
-ip_max_handler(struct servtab * sep, vlist values)
+ip_max_handler(struct servtab *sep, vlist values)
 {
-	if(sep->se_ip_max != SE_IP_MAX_UNINIT) {
+	if(sep->se_ip_max != SERVTAB_UNSPEC_VAL) {
                 TMD("ip_max");
                 return KEY_HANDLER_FAILURE;
         }
-        char* count_str = next_value(values);
+        char *count_str = next_value(values);
 
         if(count_str == NULL) {
                 TFA("ip_max");
                 return KEY_HANDLER_FAILURE;
         }
 
-        char* tail;
+        char *tail;
         errno = 0;
         long int count = strtol(count_str, &tail, 10);
 
@@ -924,14 +932,14 @@ ip_max_handler(struct servtab * sep, vlist values)
 
 /* Set user to execute as */
 static hresult 
-user_handler(struct servtab * sep, vlist values)
+user_handler(struct servtab *sep, vlist values)
 {
 	if (sep->se_user != NULL) {
 		TMD("user");
 		return KEY_HANDLER_FAILURE;		
 	}
 
-	char* name = next_value(values);
+	char *name = next_value(values);
 
 	if (name == NULL) {
 		TFA("user");
@@ -950,9 +958,9 @@ user_handler(struct servtab * sep, vlist values)
  
 /* Set group to execute as */
 static hresult 
-group_handler(struct servtab * sep, vlist values)
+group_handler(struct servtab *sep, vlist values)
 {
-	char* name = next_value(values);
+	char *name = next_value(values);
 
 	if (name == NULL) {
 		TFA("group");
@@ -971,7 +979,7 @@ group_handler(struct servtab * sep, vlist values)
 
 /* Handle program path or "internal" */
 static hresult 
-exec_handler(struct servtab * sep, vlist values)
+exec_handler(struct servtab *sep, vlist values)
 {
 	char *val;
 
@@ -983,7 +991,7 @@ exec_handler(struct servtab * sep, vlist values)
 	pid_t wait_prev = sep->se_wait;
 	if (parse_server(sep, val))
 		return KEY_HANDLER_FAILURE;
-	if (is_internal(sep) && wait_prev != SE_WAIT_UNINIT) {
+	if (is_internal(sep) && wait_prev != SERVTAB_UNSPEC_VAL) {
 		/* Warn if the user specifies an incorrect wait value for an internal */
 		if (wait_prev != sep->se_wait) {
 			WRN(WAIT_WRN, sep->se_service, (sep->se_wait ? "yes" : "no"));
@@ -1000,7 +1008,7 @@ exec_handler(struct servtab * sep, vlist values)
 
 /* Handle program arguments */
 static hresult 
-args_handler(struct servtab * sep, vlist values)
+args_handler(struct servtab *sep, vlist values)
 {
 	char *val;
 	int argc;
@@ -1015,7 +1023,7 @@ args_handler(struct servtab * sep, vlist values)
 		if (argc < MAXARGV) {
 			sep->se_argv[argc++] = newstr(val);
 		} else {
-			ERR0("Must be fewer than " TOSTRING(MAXARGV) " arguments");
+			ERR("Must be fewer than " TOSTRING(MAXARGV) " arguments");
 			return KEY_HANDLER_FAILURE;
 		}
 	}
@@ -1035,14 +1043,14 @@ args_handler(struct servtab * sep, vlist values)
  * can continue to be stored in sep->policy.
  */
 static hresult
-ipsec_handler(struct servtab * sep, vlist values)
+ipsec_handler(struct servtab *sep, vlist values)
 {
 	if (sep->se_policy != NULL) {
 		TMD("ipsec");
 		return KEY_HANDLER_FAILURE;
 	}
 
-	char* ipsecstr = next_value(values);
+	char *ipsecstr = next_value(values);
 
 	if (ipsecstr != NULL && ipsecsetup_test(ipsecstr) < 0) {
 		ERR("IPsec policy '%s' is invalid", ipsecstr);
