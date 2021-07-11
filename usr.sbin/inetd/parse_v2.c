@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <err.h>
 
 #include "inetd.h"
 #include "parse_v2.h"
@@ -120,8 +121,8 @@ parse_syntax_v2(struct servtab *sep, char **cpp)
 	invoke_result result;
 
 	if (debug) {
-		fprintf(stderr, "Found key-values definition line %zu: '%s'\n", 
-			line_number_start, sep->se_service);
+		warnx(CONF_ERROR_FMT "Found key-values definition '%s'", 
+			CONFIG, line_number, sep->se_service);
 	}
 
 	for (;;) {
@@ -144,7 +145,8 @@ parse_syntax_v2(struct servtab *sep, char **cpp)
 				return V2_SUCCESS;
 			} else {
 				if (debug) {
-					fprintf(stderr, "Invalid definition, ignoring\n");
+					warnx(CONF_ERROR_FMT "Invalid definition, ignoring\n",
+						CONFIG, line_number);
 				}
 				syslog(LOG_ERR, CONF_ERROR_FMT "Ignoring invalid definition.",
 						CONFIG, line_number_start);
@@ -714,34 +716,37 @@ protocol_handler(struct servtab *sep, vlist values)
  * Based on MALFORMED, GETVAL, and ASSIGN in getconfigent(void).
  */
 static int
-size_to_bytes(char *arg) {
+size_to_bytes(char *arg) 
+{
 	char *tail;
+	int rstatus, count;
 
-	errno = 0;
-	long int val = strtol(arg, &tail, 10);
+	count = (int)strtoi(arg, &tail, 10, 0, INT_MAX, &rstatus);
 
-	if (tail == arg) {
-		ERR("Invalid buffer size '%s'", arg);
+	if(rstatus && rstatus != ENOTSUP) {
+		ERR("Invalid buffer size '%s': %s", arg, strerror(rstatus));
 		return -1;
 	}
 
-	if (tail != NULL) {
-		if (tail[0] != '\0' && tail[1] != '\0') {
-			ERR("Invalid buffer size '%s'", arg);
+	switch(tail[0]) {
+	case 'm':
+		if (__builtin_smul_overflow((int)count, 1024, &count)) {
+			ERR("Invalid buffer size '%s': Result too large", arg);
 			return -1;
-		} else if (tail[0] == 'k') {
-			val *= 1024;
-		} else if (tail[0] == 'm') {
-			val *= 1024 * 1024;
 		}
-	}
-
-	if (errno == ERANGE || val < 1 || val > INT_MAX) {
-		ERR("Buffer size '%s' (%ld) out of range", arg, val);
+		/* fall through */
+	case 'k':
+		if (__builtin_smul_overflow((int)count, 1024, &count)) {
+			ERR("Invalid buffer size '%s': Result too large", arg);
+			return -1;
+		}
+		/* fall through */
+	case '\0':
+		return count;
+	default:
+		ERR("Invalid buffer size unit prefix");
 		return -1;
 	}
-
-	return val;
 }
 
 /* sndbuf size */
@@ -864,25 +869,25 @@ wait_handler(struct servtab *sep, vlist values)
 static hresult 
 service_max_handler(struct servtab *sep, vlist values)
 {
+	char *count_str;
+	int rstatus;
+
 	if(sep->se_service_max != SERVTAB_UNSPEC_VAL) {
 		TMD("service_max");
 		return KEY_HANDLER_FAILURE;
 	}
-	char *count_str = next_value(values);
+	
+	count_str = next_value(values);
 
 	if(count_str == NULL) {
 		TFA("service_max");
 		return KEY_HANDLER_FAILURE;
 	}
 
-	/* TODO need to figure out difference between v1 and v2 */
-	char *tail;
-	errno = 0;
-	long count = strtol(count_str, &tail, 10);
+	intmax_t count = strtoi(count_str, NULL, 10, 0, INT_MAX, &rstatus);
 
-	if (tail == count_str || errno == ERANGE 
-		|| *tail != '\0' || count < 0 || count > INT_MAX) {
-		ERR("Invalid service_max '%s'", count_str);
+	if(rstatus) {
+		ERR("Invalid service_max '%s': %s", count_str, strerror(rstatus));
 		return KEY_HANDLER_FAILURE;
 	}
 
@@ -899,35 +904,36 @@ service_max_handler(struct servtab *sep, vlist values)
 static hresult
 ip_max_handler(struct servtab *sep, vlist values)
 {
+	char *count_str;
+	int rstatus;
+	
 	if(sep->se_ip_max != SERVTAB_UNSPEC_VAL) {
-                TMD("ip_max");
-                return KEY_HANDLER_FAILURE;
-        }
-        char *count_str = next_value(values);
+		TMD("ip_max");
+		return KEY_HANDLER_FAILURE;
+	}
+	
+	count_str = next_value(values);
 
-        if(count_str == NULL) {
-                TFA("ip_max");
-                return KEY_HANDLER_FAILURE;
-        }
+	if(count_str == NULL) {
+		TFA("ip_max");
+		return KEY_HANDLER_FAILURE;
+	}
 
-        char *tail;
-        errno = 0;
-        long int count = strtol(count_str, &tail, 10);
+	intmax_t count = strtoi(count_str, NULL, 10, 0, INT_MAX, &rstatus);
 
-        if(tail == count_str || errno == ERANGE
-                || *tail != '\0' || count < 0 || count > INT_MAX) {
-                ERR("Invalid ip_max '%s'", count_str);
-                return KEY_HANDLER_FAILURE;
-        }
+	if(rstatus) {
+		ERR("Invalid ip_max '%s': %s", count_str, strerror(rstatus));
+		return KEY_HANDLER_FAILURE;
+	}
 
-        if(next_value(values) != NULL) {
-                TMA("ip_max");
-                return KEY_HANDLER_FAILURE;
-        }
+	if(next_value(values) != NULL) {
+		TMA("ip_max");
+		return KEY_HANDLER_FAILURE;
+	}
 
-        sep->se_ip_max = count;
+	sep->se_ip_max = count;
 
-        return KEY_HANDLER_SUCCESS;
+	return KEY_HANDLER_SUCCESS;
 }
 
 /* Set user to execute as */
