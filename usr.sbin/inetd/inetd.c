@@ -474,15 +474,11 @@ main(int argc, char *argv[])
 			/* Paranoia */
 			if ((int)ev->ident != sep->se_fd)
 				continue;
-			if (debug)
-				fprintf(stderr, "someone wants %s\n",
-				    sep->se_service);
+			DPRINTF("someone wants %s", sep->se_service);
 			if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
 				/* XXX here do the libwrap check-before-accept*/
 				ctrl = accept(sep->se_fd, NULL, NULL);
-				if (debug)
-					fprintf(stderr, "accept, ctrl %d\n",
-					    ctrl);
+				DPRINTF("accept, ctrl %d", ctrl);
 				if (ctrl < 0) {
 					if (errno != EINTR)
 						syslog(LOG_WARNING,
@@ -641,9 +637,7 @@ run_service(int ctrl, struct servtab *sep, int didfork)
 		} else if (sep->se_group) {
 			(void) setgid((gid_t)grp->gr_gid);
 		}
-		if (debug)
-			fprintf(stderr, "%d execl %s\n",
-			    getpid(), sep->se_server);
+		DPRINTF("%d execl %s", getpid(), sep->se_server);
 		/* Set our control descriptor to not close-on-exec... */
 		if (fcntl(ctrl, F_SETFD, 0) < 0)
 			syslog(LOG_ERR, "fcntl (%d, F_SETFD, 0): %m", ctrl);
@@ -678,9 +672,7 @@ reapchild(void)
 		pid = wait3(&status, WNOHANG, NULL);
 		if (pid <= 0)
 			break;
-		if (debug)
-			(void) fprintf(stderr, "%d reaped, status %#x\n", 
-			    pid, status);
+		DPRINTF("%d reaped, status %#x", pid, status);
 		for (sep = servtab; sep != NULL; sep = sep->se_next)
 			if (sep->se_wait == pid) {
 				struct kevent	*ev;
@@ -697,12 +689,13 @@ reapchild(void)
 				ev = allocchange();
 				EV_SET(ev, sep->se_fd, EVFILT_READ,
 				    EV_ADD | EV_ENABLE, 0, 0, (intptr_t)sep);
-				if (debug)
-					fprintf(stderr, "restored %s, fd %d\n",
-					    sep->se_service, sep->se_fd);
+				DPRINTF("restored %s, fd %d",
+				    sep->se_service, sep->se_fd);
 			}
 	}
 }
+
+size_t	line_number;
 
 /* 
  * Recursively merge loaded service definitions with any defined
@@ -966,9 +959,8 @@ setup(struct servtab *sep)
 	struct kevent	*ev;
 
 	if ((sep->se_fd = socket(sep->se_family, sep->se_socktype, 0)) < 0) {
-		if (debug)
-			fprintf(stderr, "socket failed on %s/%s: %s\n", 
-			    sep->se_service, sep->se_proto, strerror(errno));
+		DPRINTF("socket failed on %s/%s: %s", 
+		    sep->se_service, sep->se_proto, strerror(errno));
 		syslog(LOG_ERR, "%s/%s: socket: %m",
 		    sep->se_service, sep->se_proto);
 		return;
@@ -1025,9 +1017,8 @@ setsockopt(fd, SOL_SOCKET, opt, &on, (socklen_t)sizeof(on))
 
 	if (bind(sep->se_fd, &sep->se_ctrladdr,
 	    (socklen_t)sep->se_ctrladdr_size) < 0) {
-		if (debug)
-			fprintf(stderr, "bind failed on %s/%s: %s\n",
-			    sep->se_service, sep->se_proto, strerror(errno));
+		DPRINTF("bind failed on %s/%s: %s",
+			sep->se_service, sep->se_proto, strerror(errno));
 		syslog(LOG_ERR, "%s/%s: bind: %m",
 		    sep->se_service, sep->se_proto);
 		(void) close(sep->se_fd);
@@ -1056,9 +1047,7 @@ setsockopt(fd, SOL_SOCKET, opt, &on, (socklen_t)sizeof(on))
 		if (maxsock > (int)(rlim_ofile_cur - FD_MARGIN))
 			bump_nofile();
 	}
-	if (debug)
-		fprintf(stderr, "registered %s on %d\n",
-		    sep->se_server, sep->se_fd);
+	DPRINTF("registered %s on %d", sep->se_server, sep->se_fd);
 }
 
 /*
@@ -1111,10 +1100,9 @@ register_rpc(struct servtab *sep)
 	nbuf.len = ss.ss_len;
 	nbuf.maxlen = sizeof (struct sockaddr_storage);
 	for (n = sep->se_rpcversl; n <= sep->se_rpcversh; n++) {
-		if (debug)
-			fprintf(stderr, "rpcb_set: %u %d %s %s\n",
-			    sep->se_rpcprog, n, nconf->nc_netid,
-			    taddr2uaddr(nconf, &nbuf));
+		DPRINTF("rpcb_set: %u %d %s %s",
+		    sep->se_rpcprog, n, nconf->nc_netid,
+		    taddr2uaddr(nconf, &nbuf));
 		(void)rpcb_unset((unsigned int)sep->se_rpcprog, (unsigned int)n, nconf);
 		if (!rpcb_set((unsigned int)sep->se_rpcprog, (unsigned int)n, nconf, &nbuf))
 			syslog(LOG_ERR, "rpcb_set: %u %d %s %s%s",
@@ -1138,9 +1126,8 @@ unregister_rpc(struct servtab *sep)
 	}
 
 	for (n = sep->se_rpcversl; n <= sep->se_rpcversh; n++) {
-		if (debug)
-			fprintf(stderr, "rpcb_unset(%u, %d, %s)\n",
-			    sep->se_rpcprog, n, nconf->nc_netid);
+		DPRINTF("rpcb_unset(%u, %d, %s)",
+		    sep->se_rpcprog, n, nconf->nc_netid);
 		if (!rpcb_unset((unsigned int)sep->se_rpcprog, (unsigned int)n, nconf))
 			syslog(LOG_ERR, "rpcb_unset(%u, %d, %s) failed\n",
 			    sep->se_rpcprog, n, nconf->nc_netid);
@@ -1172,7 +1159,6 @@ FILE	*fconfig;
 static struct	servtab serv;
 /* Current line from current config file */
 static char	line[LINE_MAX];
-size_t	line_number;
 char    *defhost;
 #ifdef IPSEC
 char *policy;
@@ -1900,8 +1886,7 @@ machtime(void)
 	struct timeval tv;
 
 	if (gettimeofday(&tv, NULL) < 0) {
-		if (debug)
-			fprintf(stderr, "Unable to get time of day\n");
+		DPRINTF("Unable to get time of day");
 		return (0);
 	}
 #define	OFFSET ((uint32_t)25567 * 24*60*60)
@@ -2074,8 +2059,7 @@ tcpmux(int ctrl, struct servtab *sep)
 	}
 	service[len] = '\0';
 
-	if (debug)
-		fprintf(stderr, "tcpmux: someone wants %s\n", service);
+	DPRINTF("tcpmux: someone wants %s", service);
 
 	/*
 	 * Help is a required command, and lists available services,
@@ -2268,9 +2252,7 @@ purge_unchecked(void)
 		freeconfig(sep);
 		free(sep);
 	}
-	if (debug) {
-		printf("%d service(s) loaded.\n", servtab_count);
-	}
+	DPRINTF("%d service(s) loaded.", servtab_count);
 }
 
 static bool
@@ -2526,9 +2508,7 @@ read_glob_configs(char *pattern) {
 	int glob_result;
 	full_pattern = gen_file_pattern(CONFIG, pattern);
 
-	if (debug) {
-		printf("Found include directive '%s'\n", full_pattern);
-	}
+	DPRINTF("Found include directive '%s'", full_pattern);
 
 	glob_result = glob(full_pattern, GLOB_NOSORT, glob_error, &results);
 	switch(glob_result) {
@@ -2540,9 +2520,7 @@ read_glob_configs(char *pattern) {
 			break;
 		case GLOB_NOMATCH:
 			/* It's fine if no files were matched. */
-			if (debug) {
-				printf("No files matched pattern '%s'\n", full_pattern);
-			}
+			DPRINTF("No files matched pattern '%s'", full_pattern);
 			break;
 		case GLOB_NOSPACE:
 			ERR("Error when searching for include files: %s", strerror(errno));
@@ -2569,9 +2547,7 @@ include_matched_path(char *glob_path)
 	if (lstat(glob_path, &sb)) {
 		ERR("Error calling stat on path '%s': %s", glob_path, strerror(errno));
 	} else if (S_ISREG(sb.st_mode) || S_ISLNK(sb.st_mode)) {
-		if (debug) {
-			printf("Include '%s'\n", glob_path);
-		}
+		DPRINTF("Include '%s'", glob_path);
 
 		if (S_ISLNK(sb.st_mode)) {
 			tmp = glob_path;
@@ -2583,12 +2559,10 @@ include_matched_path(char *glob_path)
 			prepare_next_config(glob_path);
 			config();
 		} else {
-			if (debug) {
-				printf("File '%s' already included in current include chain\n", 
-					glob_path);
-			}
-			WRN("Including file '%s' would cause a circular dependency", 
-				glob_path);
+			DPRINTF("File '%s' already included in current include "
+			    "chain", glob_path);
+			WRN("Including file '%s' would cause a circular "
+			    "dependency", glob_path);
 		}
 
 		if (S_ISLNK(sb.st_mode)) {
@@ -2596,10 +2570,7 @@ include_matched_path(char *glob_path)
 			glob_path = tmp;
 		}
 	} else {
-		if (debug) {
-			printf("'%s' is not a file.\n", glob_path);
-		}
-
+		DPRINTF("'%s' is not a file.", glob_path);
 		ERR("The matched path '%s' is not a regular file", glob_path);
 	}
 }
@@ -2616,9 +2587,7 @@ check_no_reinclude(const char *glob_path)
 		return false;
 	}
 
-	if (debug) {
-		printf("Absolute path '%s'\n", abs_path);
-	}
+	DPRINTF("Absolute path '%s'", abs_path);
 
 	for (cur = file_list_head; cur != NULL; cur = cur->next) {
 		if (strcmp(cur->abs, abs_path) == 0) {
@@ -2696,13 +2665,11 @@ rl_process(struct servtab *sep, int ctrl)
 	bool istimevalid = false;
 	char hbuf[NI_MAXHOST];
 
-	if (debug) {
-		fprintf(stderr, "Processing rate-limiting for service: %s...\n", 
-			sep->se_service);
-		fprintf(stderr, "this service has a se_service_max "
-			"of %i, and a se_count of %i\n", 
-			sep->se_service_max, sep->se_count);
-	}
+	DPRINTF("Processing rate-limiting for service: %s...", 
+	    sep->se_service);
+	DPRINTF("this service has a se_service_max "
+	    "of %i, and a se_count of %i", 
+	    sep->se_service_max, sep->se_count);
 
 	if (sep->se_count++ == 0) {
 		(void) gettimeofday(&now, NULL);
@@ -2748,12 +2715,9 @@ rl_process(struct servtab *sep, int ctrl)
 		node = rl_try_get_ip(sep, hbuf);
 
 		if (node != NULL) {
-			if (debug){
-				fprintf(stderr,
-					"This service has a se_ip_max of %i and an ip_count of %i\n",
-					sep->se_ip_max,
-					node->count);
-			}
+			DPRINTF(
+			    "This service has a se_ip_max of %i and an ip_count of %i",
+			    sep->se_ip_max, node->count);
 			if (node->count >= sep->se_ip_max - 1) {
 				if (!istimevalid) {
 					(void) gettimeofday(&now, NULL);
@@ -2776,21 +2740,16 @@ rl_process(struct servtab *sep, int ctrl)
 				state = INC_IP_COUNT;
 			}
 		} else {
-			if (debug) {
-				fprintf(stderr,
-					"This service has a se_ip_max of %i and does not "
-					"have a ip_node associated with the requesting ip\n",
-					sep->se_ip_max);
-			}
+			DPRINTF(
+			    "This service has a se_ip_max of %i and does not "
+			    "have a ip_node associated with the requesting ip",
+			    sep->se_ip_max);
 			state = CREATE_IP_NODE;
 		}
 		
-		if (debug) {
-			fprintf(stderr,
-				"ip rate limiting state %s for service %s\n",
-				rlpstate_strs[state],
-				sep->se_server);
-		}
+		DPRINTF("ip rate limiting state %s for service %s",
+		    rlpstate_strs[state],
+		    sep->se_server);
 
 		switch (state) {
 			case DESTROY_IP_LIST:
@@ -2817,9 +2776,7 @@ rl_process(struct servtab *sep, int ctrl)
 			alarm(RETRYTIME);
 		}
 		
-		if (debug) {
-			fprintf(stderr, "Rate-limit exceeded, this service will not be started");
-		}
+		DPRINTF("Rate-limit exceeded, this service will not be started");
 		return -1;
 	}
 
@@ -2829,12 +2786,9 @@ rl_process(struct servtab *sep, int ctrl)
 static struct se_ip_list_node*
 rl_add(struct servtab *sep, char* ip)
 {
-	if (debug) {
-		fprintf(stderr,
-			"adding ip %s to service %s rate limiting tracking\n",
-			ip,
-			sep->se_server);
-	}
+	DPRINTF(
+	    "adding ip %s to service %s rate limiting tracking",
+	    ip, sep->se_server);
 
 	struct se_ip_list_node* temp = malloc(sizeof(struct se_ip_list_node));
 	temp->count = 0;
@@ -2855,11 +2809,7 @@ rl_add(struct servtab *sep, char* ip)
 static void
 rl_reset(struct servtab *sep, struct timeval *now)
 {
-	if (debug) {
-	fprintf(stderr,
-	"resetting rate limiting for service %s\n",
-		sep->se_server);
-	}
+	DPRINTF("resetting rate limiting for service %s", sep->se_server);
 
 	sep->se_count = 1;
 	sep->se_time = *now;
@@ -2880,12 +2830,9 @@ static struct se_ip_list_node *
 rl_try_get_ip(struct servtab *sep, char *ip){
 	struct se_ip_list_node *curr = sep->se_ip_list_head; 
 
-	if (debug) {
-		fprintf(stderr,
-			"attempting to find ip %s for service %s rate limiting tracking\n",
-			ip,
-			sep->se_server);
-	}
+	DPRINTF(
+	    "attempting to find ip %s for service %s rate limiting tracking",
+	    ip, sep->se_server);
 
 	while (curr != NULL) {
 		if (!strcmp(curr->address, ip)) {

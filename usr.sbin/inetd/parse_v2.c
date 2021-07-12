@@ -120,10 +120,8 @@ parse_syntax_v2(struct servtab *sep, char **cpp)
 	size_t line_number_start = line_number;
 	invoke_result result;
 
-	if (debug) {
-		warnx(CONF_ERROR_FMT "Found key-values definition '%s'", 
-			CONFIG, line_number, sep->se_service);
-	}
+	DPRINTF(CONF_ERROR_FMT "Found key-values definition '%s'", 
+	    CONFIG, line_number, sep->se_service);
 
 	for (;;) {
 		switch(result = 
@@ -144,22 +142,18 @@ parse_syntax_v2(struct servtab *sep, char **cpp)
 				}
 				return V2_SUCCESS;
 			} else {
-				if (debug) {
-					warnx(CONF_ERROR_FMT "Invalid definition, ignoring\n",
-						CONFIG, line_number);
-				}
+				DPRINTF(CONF_ERROR_FMT "Invalid definition, ignoring",
+				    CONFIG, line_number);
+				/* Log the error for the starting line of the service */
 				syslog(LOG_ERR, CONF_ERROR_FMT "Ignoring invalid definition.",
 						CONFIG, line_number_start);
-
 				if (**cpp == '\0') {
 					*cpp = nextline(fconfig);
 				}
 				return V2_SKIP;
 			}
 		case INVOKE_ERROR:
-			if (debug) {
-				fprintf(stderr, "Syntax error, exiting config\n");
-			}
+			DPRINTF("Syntax error, exiting '%s'", CONFIG);
 			return V2_ERROR;
 		}
 	}

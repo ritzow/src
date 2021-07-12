@@ -20,10 +20,13 @@
 #include "ipsec.h"
 #endif
 
-#define NORM_TYPE	0
-#define MUX_TYPE	1
-#define MUXPLUS_TYPE	2
-#define FAITH_TYPE	3
+typedef enum service_type {
+	NORM_TYPE = 0, 
+	MUX_TYPE = 1, 
+	MUXPLUS_TYPE = 2, 
+	FAITH_TYPE = 3
+} service_type;
+
 #define ISMUXPLUS(sep)	((sep)->se_type == MUXPLUS_TYPE)
 #define ISMUX(sep)	(((sep)->se_type == MUX_TYPE) || ISMUXPLUS(sep))
 
@@ -34,10 +37,22 @@
 /* Log warning/error with 0 or variadic args with line number and file name */
 
 #define ILV(prio, msg, ...) syslog(prio, CONF_ERROR_FMT msg ".", \
-	CONFIG, line_number __VA_OPT__(,) __VA_ARGS__)
+    CONFIG, line_number __VA_OPT__(,) __VA_ARGS__)
 
 #define WRN(msg, ...) ILV(LOG_WARNING, msg __VA_OPT__(,) __VA_ARGS__)
 #define ERR(msg, ...) ILV(LOG_ERR, msg __VA_OPT__(,) __VA_ARGS__)
+
+/* Debug logging */
+#ifdef DEBUG_ENABLE
+#define DPRINTF(fmt, ...) do {\
+	if (debug) {\
+		fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__);\
+	}\
+} while (0)
+#else
+#define DPRINTF(fmt, ...) __nothing
+#endif
+
 
 struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
@@ -64,14 +79,14 @@ struct	servtab {
 #endif
 	struct accept_filter_arg se_accf; /* accept filter for stream service */
 	int	se_fd;			/* open descriptor */
-	int	se_type;		/* type */
+	service_type	se_type;		/* type */
 	union {
 		struct	sockaddr se_ctrladdr;
 		struct	sockaddr_in se_ctrladdr_in;
 		struct	sockaddr_in6 se_ctrladdr_in6; /* in6 is used by bind()/getaddrinfo */
 		struct	sockaddr_un se_ctrladdr_un;
 	};			/* bound address */
-	int	se_ctrladdr_size;
+	socklen_t	se_ctrladdr_size;
 	int	se_service_max;		/* max # of instances of this service */
 	int	se_count;		/* number of instances of this service started since se_time */
 	int	se_ip_max;  		/* max # of instances of this service per ip per minute */

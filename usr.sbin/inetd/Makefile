@@ -10,6 +10,8 @@ SRCS=	inetd.c parse_v2.c
 MAN=	inetd.8
 MLINKS=	inetd.8 inetd.conf.5
 
+CPPFLAGS+=-DDEBUG_ENABLE
+
 CPPFLAGS+=-DLIBWRAP
 # Use LIBWRAP_INTERNAL for libwrap checking of inetd's `internal' services.
 #CPPFLAGS+=-DLIBWRAP_INTERNAL
