@@ -55,10 +55,11 @@ static invoke_result	parse_invoke_handler(bool *, char **, struct servtab *);
 static bool fill_default_values(struct servtab *);
 static bool parse_quotes(char **);
 static bool	skip_whitespace(char **);
-static int	size_to_bytes(char *arg);
+static int	size_to_bytes(char *);
 static bool infer_protocol_ip_version(struct servtab *);
 static bool	setup_internal(struct servtab *);
 static void	try_infer_socktype(struct servtab *);
+char hex_to_bits(char);
 #ifdef IPSEC
 static void	setup_ipsec(struct servtab *);
 #endif
@@ -347,49 +348,50 @@ parse_quotes(char **cpp) {
 	char *cp = *cpp;
 	char quote = *cp;
 
-	memmove(cp, cp+1, strlen(cp)); 	
+	memmove(cp, cp+1, strlen(cp+1)+1); 	
 	
 	while (*cp && quote) {
 		if (*cp == quote) {
-				quote = '\0';
-				memmove(cp, cp+1, strlen(cp)); 
-		} else if (*cp == '\\') {
+			quote = '\0';
+			memmove(cp, cp+1, strlen(cp+1)+1);
+			continue;
+		}
+		
+		if (*cp == '\\') {
 			/* start is location of backslash */
 			char *start = cp;
-			int count_read;
 			cp++;
 			switch (*cp) {
-			case 'x':
-				sscanf(cp+1, "%2hhx%n", start, &count_read);
-				if (count_read == 0) {
-					ERR("Expected hexadecimal value after \\x");
+			case 'x': {
+				char temp, bits;
+				if (((bits = hex_to_bits(*(cp + 1))) == -1) 
+					|| ((temp = hex_to_bits(*(cp + 2))) == -1)) {
+					ERR("Invalid hexcode sequence '%.4s'", start);
 					return false;
 				}
-				memmove(cp, cp + count_read + 1, strlen(cp));
-				break;
+				bits <<= 4;
+				bits |= temp;
+				*start = bits;
+				memmove(cp, cp + 3, strlen(cp+3)+1);
+				continue;
+			}
 			case '\\':
 				*start = '\\';
-				memmove(cp, cp+1, strlen(cp));
 				break;
 			case 'n':
 				*start = '\n';
-				memmove(cp, cp+1, strlen(cp));
 				break;
 			case 't':
 				*start = '\t';
-				memmove(cp, cp+1, strlen(cp));
 				break;
 			case 'r':
 				*start = '\r';
-				memmove(cp, cp+1, strlen(cp));
 				break;
 			case '\'':
 				*start = '\'';
-				memmove(cp, cp+1, strlen(cp));
 				break;
 			case '"':
 				*start = '"';
-				memmove(cp, cp+1, strlen(cp));
 				break;
 			case '\0':
 				ERR("Dangling escape sequence backslash");
@@ -398,9 +400,12 @@ parse_quotes(char **cpp) {
 				ERR("Unknown escape sequence '\\%c'", *cp);
 				return false;
 			}
-		} else {
-			cp++;
+			memmove(cp, cp+1, strlen(cp+1)+1);
+			continue;
 		}
+
+		/* Regular character, advance to the next one. */
+		cp++;
 	}
 
 	if (*cp == '\0' && quote) {
@@ -409,7 +414,39 @@ parse_quotes(char **cpp) {
 	}
 	*cpp = cp;
 	return true;
-} 
+}
+
+char hex_to_bits(char in) {
+	switch(in) {
+	case '0':
+	case '1':
+	case '2':
+	case '3':
+	case '4':
+	case '5':
+	case '6':
+	case '7':
+	case '8':
+	case '9':
+		return in - '0';
+	case 'a':
+	case 'b':
+	case 'c':
+	case 'd':
+	case 'e':
+	case 'f':
+		return in - 'a' + 10;
+	case 'A':
+	case 'B':
+	case 'C':
+	case 'D':
+	case 'E':
+	case 'F':
+		return in - 'A' + 10;
+	default:
+		return -1;
+	}
+}
 
 /* 
  * Parse the next value for a key handler and advance list->cp past the found
