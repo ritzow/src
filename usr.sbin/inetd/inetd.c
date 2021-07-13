@@ -1321,6 +1321,8 @@ more:
 		sep->se_type = NORM_TYPE;
 	}
 
+	DPRINTCONF("Found positional service definition '%s'", sep->se_service);
+
 	/* on/off/socktype */
 	arg = skip(&cp);
 	if (arg == NULL) {
@@ -2508,7 +2510,7 @@ read_glob_configs(char *pattern) {
 	int glob_result;
 	full_pattern = gen_file_pattern(CONFIG, pattern);
 
-	DPRINTF("Found include directive '%s'", full_pattern);
+	DPRINTCONF("Found include directive '%s'", full_pattern);
 
 	glob_result = glob(full_pattern, GLOB_NOSORT, glob_error, &results);
 	switch(glob_result) {
@@ -2520,7 +2522,7 @@ read_glob_configs(char *pattern) {
 			break;
 		case GLOB_NOMATCH:
 			/* It's fine if no files were matched. */
-			DPRINTF("No files matched pattern '%s'", full_pattern);
+			DPRINTCONF("No files matched pattern '%s'", full_pattern);
 			break;
 		case GLOB_NOSPACE:
 			ERR("Error when searching for include files: %s", strerror(errno));
@@ -2547,7 +2549,7 @@ include_matched_path(char *glob_path)
 	if (lstat(glob_path, &sb)) {
 		ERR("Error calling stat on path '%s': %s", glob_path, strerror(errno));
 	} else if (S_ISREG(sb.st_mode) || S_ISLNK(sb.st_mode)) {
-		DPRINTF("Include '%s'", glob_path);
+		DPRINTCONF("Include '%s'", glob_path);
 
 		if (S_ISLNK(sb.st_mode)) {
 			tmp = glob_path;
@@ -2559,7 +2561,7 @@ include_matched_path(char *glob_path)
 			prepare_next_config(glob_path);
 			config();
 		} else {
-			DPRINTF("File '%s' already included in current include "
+			DPRINTCONF("File '%s' already included in current include "
 			    "chain", glob_path);
 			WRN("Including file '%s' would cause a circular "
 			    "dependency", glob_path);
@@ -2570,7 +2572,7 @@ include_matched_path(char *glob_path)
 			glob_path = tmp;
 		}
 	} else {
-		DPRINTF("'%s' is not a file.", glob_path);
+		DPRINTCONF("'%s' is not a file.", glob_path);
 		ERR("The matched path '%s' is not a regular file", glob_path);
 	}
 }
@@ -2587,7 +2589,7 @@ check_no_reinclude(const char *glob_path)
 		return false;
 	}
 
-	DPRINTF("Absolute path '%s'", abs_path);
+	DPRINTCONF("Absolute path '%s'", abs_path);
 
 	for (cur = file_list_head; cur != NULL; cur = cur->next) {
 		if (strcmp(cur->abs, abs_path) == 0) {

@@ -53,6 +53,8 @@ typedef enum service_type {
 #define DPRINTF(fmt, ...) __nothing
 #endif
 
+#define DPRINTCONF(fmt, ...) DPRINTF(CONF_ERROR_FMT fmt,\
+	CONFIG, line_number __VA_OPT__(,) __VA_ARGS__)
 
 struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
