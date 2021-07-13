@@ -401,7 +401,7 @@ get_handler(char *name)
 static inline void 
 strmove(char *buf, size_t off)
 { 
-	memcpy(buf, buf + off, strlen(buf + off) + 1);
+	memmove(buf, buf + off, strlen(buf + off) + 1);
 }
 
 /* 
