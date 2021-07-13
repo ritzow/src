@@ -1,3 +1,62 @@
+/*-
+ * Copyright (c) 1998, 2003 The NetBSD Foundation, Inc.
+ * All rights reserved.
+ *
+ * This code is derived from software contributed to The NetBSD Foundation
+ * by Jason R. Thorpe of the Numerical Aerospace Simulation Facility,
+ * NASA Ames Research Center and by Matthias Scheler.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * Copyright (c) 1983, 1991, 1993, 1994
+ *	The Regents of the University of California.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #ifndef _INETD_H
 #define _INETD_H
 
@@ -56,6 +115,9 @@ typedef enum service_type {
 #define DPRINTCONF(fmt, ...) DPRINTF(CONF_ERROR_FMT fmt,\
 	CONFIG, line_number __VA_OPT__(,) __VA_ARGS__)
 
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
 struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
 	char	*se_service;		/* name of service */
@@ -89,14 +151,14 @@ struct	servtab {
 		struct	sockaddr_un se_ctrladdr_un;
 	};			/* bound address */
 	socklen_t	se_ctrladdr_size;
-	int	se_service_max;		/* max # of instances of this service */
-	int	se_count;		/* number of instances of this service started since se_time */
-	int	se_ip_max;  		/* max # of instances of this service per ip per minute */
-	struct se_ip_list_node{
+	size_t	se_service_max;		/* max # of instances of this service */
+	size_t	se_count;		/* number of instances of this service started since se_time */
+	size_t	se_ip_max;  		/* max # of instances of this service per ip per minute */
+	struct	se_ip_list_node{
 		char address[14];
-		int count;		/* number of instances of this service started from
+		size_t count;		/* number of instances of this service started from
 						this ip address since se_time */
-		struct se_ip_list_node* next;
+		struct se_ip_list_node	*next;
 	} *se_ip_list_head; 		/* linked list of number of requests per ip */
 	struct	timeval se_time;	/* start of se_count */
 	struct	servtab *se_next;
@@ -104,7 +166,7 @@ struct	servtab {
 
 /* From inetd.c */
 int 	parse_protocol(struct servtab *);
-int 	parse_wait(struct servtab *, int wait);
+int 	parse_wait(struct servtab *, int);
 int 	parse_server(struct servtab *, const char *);
 void 	parse_socktype(char *, struct servtab *);
 void 	parse_accept_filter(char *, struct servtab *);
@@ -130,7 +192,20 @@ extern char *defhost;
 /* Default IPsec policy for current config file */
 extern char *policy;
 
+/* From parse_v2.c */
+
+typedef enum parse_v2_result {V2_SUCCESS, V2_SKIP, V2_ERROR} parse_v2_result;
+
+/* 
+ * Parse a key-values service definition, starting at the token after
+ * on/off (i.e. parse a series of key-values pairs terminated by a semicolon).
+ * Fills the provided servtab structure. Does not call freeconfig on error.
+ */
+parse_v2_result	parse_syntax_v2(struct servtab *, char **);
+
 /* "Unspecified" indicator value for servtabs (mainly used by v2 syntax) */
 #define SERVTAB_UNSPEC_VAL -1
+
+#define SERVTAB_UNSPEC_SIZE_T SIZE_MAX
 
 #endif

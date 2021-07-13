@@ -1,3 +1,67 @@
+/*	$NetBSD: parse_v2.c,v 1.126 2019/12/27 09:22:20 msaitoh Exp $	*/
+
+/*-
+ * Copyright (c) 1998, 2003 The NetBSD Foundation, Inc.
+ * All rights reserved.
+ *
+ * This code is derived from software contributed to The NetBSD Foundation
+ * by Jason R. Thorpe of the Numerical Aerospace Simulation Facility,
+ * NASA Ames Research Center and by Matthias Scheler.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * Copyright (c) 1983, 1991, 1993, 1994
+ *	The Regents of the University of California.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+#include <sys/cdefs.h>
+__RCSID("$NetBSD: inetd.c,v 1.126 2019/12/27 09:22:20 msaitoh Exp $");
+
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -9,7 +73,6 @@
 #include <err.h>
 
 #include "inetd.h"
-#include "parse_v2.h"
 #include "ipsec.h"
 
 typedef enum values_state
@@ -38,7 +101,7 @@ static hresult	exec_handler(struct servtab *, vlist);
 static hresult	filter_handler(struct servtab *, vlist);
 static hresult	group_handler(struct servtab *, vlist);
 static hresult	service_max_handler(struct servtab *, vlist);
-static hresult  ip_max_handler(struct servtab *, vlist);
+static hresult	ip_max_handler(struct servtab *, vlist);
 static hresult	protocol_handler(struct servtab *, vlist);
 static hresult	recv_buf_handler(struct servtab *, vlist);
 static hresult	send_buf_handler(struct servtab *, vlist);
@@ -63,6 +126,7 @@ char hex_to_bits(char);
 #ifdef IPSEC
 static void	setup_ipsec(struct servtab *);
 #endif
+static inline void	strmove(char *buf, size_t off);
 
 /* v2 Key handlers infrastructure */
 
@@ -91,9 +155,6 @@ static struct key_handler {
 	{"ipsec", ipsec_handler}
 #endif
 };
-
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
 
 /* Error Not Initialized */
 #define ENI(key) ERR("Required option '%s' not specified", (key))
@@ -141,16 +202,16 @@ parse_syntax_v2(struct servtab *sep, char **cpp)
 					*cpp = nextline(fconfig);
 				}
 				return V2_SUCCESS;
-			} else {
-				DPRINTCONF("Ignoring invalid definition.");
-				/* Log the error for the starting line of the service */
-				syslog(LOG_ERR, CONF_ERROR_FMT "Ignoring invalid definition.",
-						CONFIG, line_number_start);
-				if (**cpp == '\0') {
-					*cpp = nextline(fconfig);
-				}
-				return V2_SKIP;
 			}
+
+			DPRINTCONF("Ignoring invalid definition.");
+			/* Log the error for the starting line of the service */
+			syslog(LOG_ERR, CONF_ERROR_FMT "Ignoring invalid definition.",
+					CONFIG, line_number_start);
+			if (**cpp == '\0') {
+				*cpp = nextline(fconfig);
+			}
+			return V2_SKIP;
 		case INVOKE_ERROR:
 			DPRINTCONF("Syntax error; Exiting '%s'", CONFIG);
 			return V2_ERROR;
@@ -165,11 +226,11 @@ parse_syntax_v2(struct servtab *sep, char **cpp)
  * Return true on success, false on failure. 
  */
 static bool 
-fill_default_values(struct servtab *sep) {
-
+fill_default_values(struct servtab *sep) 
+{
 	bool is_valid = true;
 
-	if (sep->se_service_max == SERVTAB_UNSPEC_VAL) {
+	if (sep->se_service_max == SERVTAB_UNSPEC_SIZE_T) {
 		/* Set default to same as in v1 syntax. */
 		sep->se_service_max = TOOMANY;
 	}
@@ -297,7 +358,8 @@ infer_protocol_ip_version(struct servtab *sep)
  * encountered. 
  */
 static bool 
-skip_whitespace(char **cpp) {
+skip_whitespace(char **cpp)
+{
 	char *cp = *cpp;
 
 	int line_start = line_number;
@@ -325,14 +387,21 @@ skip_whitespace(char **cpp) {
 
 /* Get the key handler function pointer for the given name */
 static key_handler_func 
-get_handler(char *name) {
+get_handler(char *name)
+{
 	/* Call function to handle option parsing. */
-	for(size_t i = 0; i < __arraycount(key_handlers); i++) {
+	for (size_t i = 0; i < __arraycount(key_handlers); i++) {
 		if (strcmp(key_handlers[i].name, name) == 0) {
 			return key_handlers[i].handler;
 		}
 	}
 	return NULL;
+}
+
+static inline void 
+strmove(char *buf, size_t off)
+{ 
+	memcpy(buf, buf + off, strlen(buf + off) + 1);
 }
 
 /* 
@@ -341,17 +410,16 @@ get_handler(char *name) {
  * Uses shell-style quote parsing.
  */
 static bool 
-parse_quotes(char **cpp) {
-
+parse_quotes(char **cpp)
+{
 	char *cp = *cpp;
 	char quote = *cp;
 
-	memmove(cp, cp+1, strlen(cp+1)+1); 	
-	
+	strmove(cp, 1);
 	while (*cp && quote) {
 		if (*cp == quote) {
 			quote = '\0';
-			memmove(cp, cp+1, strlen(cp+1)+1);
+			strmove(cp, 1);
 			continue;
 		}
 		
@@ -363,14 +431,15 @@ parse_quotes(char **cpp) {
 			case 'x': {
 				char temp, bits;
 				if (((bits = hex_to_bits(*(cp + 1))) == -1) 
-					|| ((temp = hex_to_bits(*(cp + 2))) == -1)) {
-					ERR("Invalid hexcode sequence '%.4s'", start);
+				|| ((temp = hex_to_bits(*(cp + 2))) == -1)) {
+					ERR("Invalid hexcode sequence '%.4s'", 
+					    start);
 					return false;
 				}
 				bits <<= 4;
 				bits |= temp;
 				*start = bits;
-				memmove(cp, cp + 3, strlen(cp+3)+1);
+				strmove(cp, 3);
 				continue;
 			}
 			case '\\':
@@ -398,7 +467,7 @@ parse_quotes(char **cpp) {
 				ERR("Unknown escape sequence '\\%c'", *cp);
 				return false;
 			}
-			memmove(cp, cp+1, strlen(cp+1)+1);
+			strmove(cp, 1);
 			continue;
 		}
 
@@ -414,32 +483,15 @@ parse_quotes(char **cpp) {
 	return true;
 }
 
-char hex_to_bits(char in) {
+char
+hex_to_bits(char in)
+{
 	switch(in) {
-	case '0':
-	case '1':
-	case '2':
-	case '3':
-	case '4':
-	case '5':
-	case '6':
-	case '7':
-	case '8':
-	case '9':
+	case '0'...'9':
 		return in - '0';
-	case 'a':
-	case 'b':
-	case 'c':
-	case 'd':
-	case 'e':
-	case 'f':
+	case 'a'...'f':
 		return in - 'a' + 10;
-	case 'A':
-	case 'B':
-	case 'C':
-	case 'D':
-	case 'E':
-	case 'F':
+	case 'A'...'F':
 		return in - 'A' + 10;
 	default:
 		return -1;
@@ -452,12 +504,12 @@ char hex_to_bits(char in) {
  * during parsing, and set the list->state to the appropriate value.
  */
 static char * 
-next_value(vlist list) {
-
+next_value(vlist list)
+{
 	char *cp = list->cp;
 	
 	if (list->state != VALS_PARSING) {
-		/* Already at the end of a values list, or there was an error. */
+		/* Already at the end of a values list, or there was an error.*/
 		return NULL;
 	}
 
@@ -616,7 +668,8 @@ parse_invoke_handler(bool *is_valid_definition, char **cpp, struct servtab *sep)
 
 /* Return true if sep must be a built-in service */
 static bool
-is_internal(struct servtab *sep) {
+is_internal(struct servtab *sep)
+{
 	return sep->se_bi != NULL;
 }
 
@@ -745,14 +798,14 @@ protocol_handler(struct servtab *sep, vlist values)
  * Based on MALFORMED, GETVAL, and ASSIGN in getconfigent(void).
  */
 static int
-size_to_bytes(char *arg) 
+size_to_bytes(char *arg)
 {
 	char *tail;
 	int rstatus, count;
 
 	count = (int)strtoi(arg, &tail, 10, 0, INT_MAX, &rstatus);
 
-	if(rstatus && rstatus != ENOTSUP) {
+	if (rstatus && rstatus != ENOTSUP) {
 		ERR("Invalid buffer size '%s': %s", arg, strerror(rstatus));
 		return -1;
 	}
@@ -763,13 +816,13 @@ size_to_bytes(char *arg)
 			ERR("Invalid buffer size '%s': Result too large", arg);
 			return -1;
 		}
-		/* fall through */
+		/* FALLTHROUGH */
 	case 'k':
 		if (__builtin_smul_overflow((int)count, 1024, &count)) {
 			ERR("Invalid buffer size '%s': Result too large", arg);
 			return -1;
 		}
-		/* fall through */
+		/* FALLTHROUGH */
 	case '\0':
 		return count;
 	default:
@@ -901,26 +954,26 @@ service_max_handler(struct servtab *sep, vlist values)
 	char *count_str;
 	int rstatus;
 
-	if(sep->se_service_max != SERVTAB_UNSPEC_VAL) {
+	if (sep->se_service_max != SERVTAB_UNSPEC_SIZE_T) {
 		TMD("service_max");
 		return KEY_HANDLER_FAILURE;
 	}
 	
 	count_str = next_value(values);
 
-	if(count_str == NULL) {
+	if (count_str == NULL) {
 		TFA("service_max");
 		return KEY_HANDLER_FAILURE;
 	}
 
-	intmax_t count = strtoi(count_str, NULL, 10, 0, INT_MAX, &rstatus);
+	intmax_t count = strtoi(count_str, NULL, 10, 0, SIZE_MAX - 1, &rstatus);
 
-	if(rstatus) {
+	if (rstatus) {
 		ERR("Invalid service_max '%s': %s", count_str, strerror(rstatus));
 		return KEY_HANDLER_FAILURE;
 	}
 
-	if(next_value(values) != NULL) {
+	if (next_value(values) != NULL) {
 		TMA("service_max");
 		return KEY_HANDLER_FAILURE;
 	}
@@ -936,7 +989,7 @@ ip_max_handler(struct servtab *sep, vlist values)
 	char *count_str;
 	int rstatus;
 	
-	if(sep->se_ip_max != SERVTAB_UNSPEC_VAL) {
+	if(sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
 		TMD("ip_max");
 		return KEY_HANDLER_FAILURE;
 	}
@@ -948,14 +1001,14 @@ ip_max_handler(struct servtab *sep, vlist values)
 		return KEY_HANDLER_FAILURE;
 	}
 
-	intmax_t count = strtoi(count_str, NULL, 10, 0, INT_MAX, &rstatus);
+	intmax_t count = strtoi(count_str, NULL, 10, 0, SIZE_MAX - 1, &rstatus);
 
-	if(rstatus) {
+	if (rstatus) {
 		ERR("Invalid ip_max '%s': %s", count_str, strerror(rstatus));
 		return KEY_HANDLER_FAILURE;
 	}
 
-	if(next_value(values) != NULL) {
+	if (next_value(values) != NULL) {
 		TMA("ip_max");
 		return KEY_HANDLER_FAILURE;
 	}

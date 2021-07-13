@@ -222,7 +222,6 @@ __RCSID("$NetBSD: inetd.c,v 1.126 2019/12/27 09:22:20 msaitoh Exp $");
 #include <ifaddrs.h>
 
 #include "inetd.h"
-#include "parse_v2.h"
 
 #ifdef LIBWRAP
 # include <tcpd.h>
@@ -281,8 +280,8 @@ static void	discard_stream(int, struct servtab *);
 static void	echo_dg(int, struct servtab *);
 static void	echo_stream(int, struct servtab *);
 static void	endconfig(void);
-static struct servtab *enter(struct servtab *);
-static struct servtab *getconfigent(char **);
+static struct servtab	*enter(struct servtab *);
+static struct servtab	*getconfigent(char **);
 __dead static void	goaway(void);
 static void	machtime_dg(int, struct servtab *);
 static void	machtime_stream(int, struct servtab *);
@@ -301,25 +300,25 @@ static void	inetd_setproctitle(char *, int);
 static void	initring(void);
 static uint32_t	machtime(void);
 static int	port_good_dg(struct sockaddr *);
-static int 	dg_broadcast(struct in_addr *);
+static int	dg_broadcast(struct in_addr *);
 static int	my_kevent(const struct kevent *, size_t, struct kevent *, size_t);
-static struct kevent *	allocchange(void);
+static struct kevent	*allocchange(void);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
-static struct servtab init_servtab(void);
-static int 	rl_process(struct servtab *, int);
-static struct se_ip_list_node *	rl_add(struct servtab *, char *);
+static struct servtab	init_servtab(void);
+static int	rl_process(struct servtab *, int);
+static struct se_ip_list_node	*rl_add(struct servtab *, char *);
 static void	rl_reset(struct servtab *, struct timeval *);
-static struct se_ip_list_node *	rl_try_get_ip(struct servtab *, char *);
-static void include_configs(char *);
-static int glob_error(const char *, int);
-static void read_glob_configs(char *);
+static struct se_ip_list_node	*rl_try_get_ip(struct servtab *, char *);
+static void	include_configs(char *);
+static int	glob_error(const char *, int);
+static void	read_glob_configs(char *);
 static void	prepare_next_config(const char*);
 static bool	is_same_serivce(struct servtab *, struct servtab *);
-static char *	gen_file_pattern(const char *, const char *);
+static char	*gen_file_pattern(const char *, const char *);
 static bool	check_no_reinclude(const char *);
 static void	include_matched_path(char *);
-static void purge_unchecked(void);
+static void	purge_unchecked(void);
 static void	config_root(void);
 
 struct biltin {
@@ -753,7 +752,8 @@ config(void)
 			SWAP(char *, sep->se_policy, cp->se_policy);
 #endif
 			SWAP(int, cp->se_type, sep->se_type);
-			SWAP(int, cp->se_service_max, sep->se_service_max);
+			SWAP(size_t, cp->se_service_max, sep->se_service_max);
+			SWAP(size_t, cp->se_ip_max, sep->se_ip_max);
 #undef SWAP
 			if (isrpcservice(sep))
 				unregister_rpc(sep);
@@ -1062,7 +1062,7 @@ close_sep(struct servtab *sep)
 		sep->se_fd = -1;
 	}
 	sep->se_count = 0;
-	if (sep->se_ip_max > -1) {
+	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
 		struct se_ip_list_node *curr, *next;
 		curr = sep->se_ip_list_head;
 		while (curr != NULL) {
@@ -1516,8 +1516,24 @@ do { \
 		if ((cp1 = strchr(arg, ':')) == NULL)
 			cp1 = strchr(arg, '.');
 		if (cp1 != NULL) {
+			int rstatus;
 			*cp1++ = '\0';
-			sep->se_service_max = atoi(cp1);
+			sep->se_service_max = (size_t)strtoi(cp1, NULL, 10, 0, 
+			    SIZE_MAX - 1, &rstatus);
+
+			if (rstatus != 0) {
+				if (rstatus != ERANGE) {
+					/* For compatibility with atoi parsing */
+					sep->se_service_max = 0;
+				}
+
+				WRN("Improper \"max\" value '%s', "
+				    "using '%zu' instead: %s", 
+				    cp1,
+				    sep->se_service_max,
+				    strerror(rstatus));
+			}
+
 		} else
 			sep->se_service_max = TOOMANY;
 	}
@@ -1974,7 +1990,7 @@ print_service(const char *action, struct servtab *sep)
 
 	if (isrpcservice(sep))
 		fprintf(stderr,
-		    "%s: %s rpcprog=%d, rpcvers = %d/%d, proto=%s, wait.max=%d.%d, user:group=%s:%s builtin=%lx server=%s"
+		    "%s: %s rpcprog=%d, rpcvers = %d/%d, proto=%s, wait.max=%d.%zu, user:group=%s:%s builtin=%lx server=%s"
 #ifdef IPSEC
 		    " policy=\"%s\""
 #endif
@@ -1989,7 +2005,7 @@ print_service(const char *action, struct servtab *sep)
 		    );
 	else
 		fprintf(stderr,
-		    "%s: %s:%s proto=%s%s, wait.max=%d.%d, user:group=%s:%s builtin=%lx server=%s"
+		    "%s: %s:%s proto=%s%s, wait.max=%d.%zu, user:group=%s:%s builtin=%lx server=%s"
 #ifdef IPSEC
 		    " policy=%s"
 #endif
@@ -2432,8 +2448,8 @@ init_servtab() {
 		 * Set se_max to non-zero so uninitialized value is not
 	 	 * a valid value. Useful in v2 syntax parsing. 
 		 */
-		.se_service_max = SERVTAB_UNSPEC_VAL,
-		.se_ip_max = SERVTAB_UNSPEC_VAL,
+		.se_service_max = SERVTAB_UNSPEC_SIZE_T,
+		.se_ip_max = SERVTAB_UNSPEC_SIZE_T,
 		.se_wait = SERVTAB_UNSPEC_VAL,
 		.se_socktype = SERVTAB_UNSPEC_VAL
 		/* All other fields initialized to 0 or null */
@@ -2451,7 +2467,6 @@ struct file_list {
 static void
 include_configs(char *pattern)
 {
-
 	/* Allocate global per-config state on the thread stack */
 	const char* save_CONFIG;
 	FILE	*save_fconfig;
@@ -2670,7 +2685,7 @@ rl_process(struct servtab *sep, int ctrl)
 	DPRINTF("Processing rate-limiting for service: %s...", 
 	    sep->se_service);
 	DPRINTF("this service has a se_service_max "
-	    "of %i, and a se_count of %i", 
+	    "of %zu, and a se_count of %zu", 
 	    sep->se_service_max, sep->se_count);
 
 	if (sep->se_count++ == 0) {
@@ -2685,17 +2700,19 @@ rl_process(struct servtab *sep, int ctrl)
 			rl_reset(sep, &now);
 		} else {
 			syslog(LOG_ERR,
-                        	"%s/%s max spawn rate (%d in %d seconds) "
-                        	"exceeded; service not started",
-                        	sep->se_service,
-                        	sep->se_proto,
-                        	sep->se_service_max,
-                        	CNT_INTVL);
+                            "%s/%s max spawn rate (%zu in " 
+			    TOSTRING(CNT_INTVL) " seconds) "
+                            "exceeded; service not started",
+                            sep->se_service,
+                            sep->se_proto,
+                            sep->se_service_max);
 			time_fail = 1;
 		}
 	}
 
-	if (sep->se_ip_max > -1) {
+	/* TODO reduce redundacy between service_max and ip_max */
+
+	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
 		len = sizeof(addr);
 		if (getpeername(ctrl, &addr, &len)){ 
 			/* error, log it and skip ip rate limiting */
@@ -2718,7 +2735,7 @@ rl_process(struct servtab *sep, int ctrl)
 
 		if (node != NULL) {
 			DPRINTF(
-			    "This service has a se_ip_max of %i and an ip_count of %i",
+			    "This service has a se_ip_max of %zu and an ip_count of %zu",
 			    sep->se_ip_max, node->count);
 			if (node->count >= sep->se_ip_max - 1) {
 				if (!istimevalid) {
@@ -2729,12 +2746,12 @@ rl_process(struct servtab *sep, int ctrl)
 					state = DESTROY_IP_LIST;
 				} else {
 					syslog(LOG_ERR,
-                        			"%s/%s max ip spawn rate (%d in %d seconds) "
-                        			"exceeded; service not started",
-                        			sep->se_service,
-                        			sep->se_proto,
-                        			sep->se_ip_max,
-                        			CNT_INTVL);
+                        		    "%s/%s max ip spawn rate (%zu in " 
+					    TOSTRING(CNT_INTVL) " seconds) "
+                        		    "exceeded; service not started",
+                        		    sep->se_service,
+                        		    sep->se_proto,
+                        		    sep->se_ip_max);
 					time_fail = 1;
 					state = ERROR;
 				}
@@ -2743,7 +2760,7 @@ rl_process(struct servtab *sep, int ctrl)
 			}
 		} else {
 			DPRINTF(
-			    "This service has a se_ip_max of %i and does not "
+			    "This service has a se_ip_max of %zu and does not "
 			    "have a ip_node associated with the requesting ip",
 			    sep->se_ip_max);
 			state = CREATE_IP_NODE;
@@ -2815,7 +2832,7 @@ rl_reset(struct servtab *sep, struct timeval *now)
 
 	sep->se_count = 1;
 	sep->se_time = *now;
-	if (sep->se_ip_max > -1) {
+	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
 		struct se_ip_list_node *curr, *next;
 		curr = sep->se_ip_list_head;
 
