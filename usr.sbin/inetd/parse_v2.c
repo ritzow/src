@@ -966,7 +966,8 @@ service_max_handler(struct servtab *sep, vlist values)
 		return KEY_HANDLER_FAILURE;
 	}
 
-	intmax_t count = strtoi(count_str, NULL, 10, 0, SIZE_MAX - 1, &rstatus);
+	size_t count = (size_t)strtou(count_str, NULL, 10, 0, 
+	    SERVTAB_COUNT_MAX, &rstatus);
 
 	if (rstatus) {
 		ERR("Invalid service_max '%s': %s", count_str, strerror(rstatus));
@@ -1001,7 +1002,8 @@ ip_max_handler(struct servtab *sep, vlist values)
 		return KEY_HANDLER_FAILURE;
 	}
 
-	intmax_t count = strtoi(count_str, NULL, 10, 0, SIZE_MAX - 1, &rstatus);
+	size_t count = (size_t)strtou(count_str, NULL, 10, 0, 
+	    SERVTAB_COUNT_MAX, &rstatus);
 
 	if (rstatus) {
 		ERR("Invalid ip_max '%s': %s", count_str, strerror(rstatus));

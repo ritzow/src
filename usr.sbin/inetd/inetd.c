@@ -190,6 +190,7 @@ __RCSID("$NetBSD: inetd.c,v 1.126 2019/12/27 09:22:20 msaitoh Exp $");
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <sys/event.h>
+#include <sys/socket.h>
 
 
 #ifndef NO_RPC
@@ -1518,8 +1519,8 @@ do { \
 		if (cp1 != NULL) {
 			int rstatus;
 			*cp1++ = '\0';
-			sep->se_service_max = (size_t)strtoi(cp1, NULL, 10, 0, 
-			    SIZE_MAX - 1, &rstatus);
+			sep->se_service_max = (size_t)strtou(cp1, NULL, 10, 0, 
+			    SERVTAB_COUNT_MAX, &rstatus);
 
 			if (rstatus != 0) {
 				if (rstatus != ERANGE) {
@@ -2280,6 +2281,7 @@ is_same_serivce(struct servtab *sep, struct servtab *cp)
 	    strcmp(sep->se_service, cp->se_service) == 0 &&
 	    strcmp(sep->se_hostaddr, cp->se_hostaddr) == 0 &&
 	    strcmp(sep->se_proto, cp->se_proto) == 0 &&
+	    sep->se_family == cp->se_family &&
 	    ISMUX(sep) == ISMUX(cp);
 }
 
@@ -2657,26 +2659,24 @@ glob_error(const char *path, int error)
 }
 
 enum rlpstate {
-	ERROR,
-	DESTROY_IP_LIST,
-	CREATE_IP_NODE,
-	INC_IP_COUNT
+	ERROR = 0,
+	DESTROY_IP_LIST = 1,
+	CREATE_IP_NODE = 2,
+	INC_IP_COUNT = 3
 };
 
 char rlpstate_strs[4][16] = {
-    "error",
-    "destroy_ip_list",
-    "create_ip_node",
-    "inc_ip_count"
+	"error",
+	"destroy_ip_list",
+	"create_ip_node",
+	"inc_ip_count"
 };
 
 static int
 rl_process(struct servtab *sep, int ctrl)
 {
-	socklen_t len;
 	struct se_ip_list_node *node;
 	enum rlpstate state;
-	struct sockaddr addr;
 	struct timeval now;
 	int time_fail = 0;
 	bool istimevalid = false;
@@ -2713,22 +2713,24 @@ rl_process(struct servtab *sep, int ctrl)
 	/* TODO reduce redundacy between service_max and ip_max */
 
 	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
-		len = sizeof(addr);
-		if (getpeername(ctrl, &addr, &len)){ 
+		struct sockaddr_storage addr;
+		socklen_t len = sizeof(struct sockaddr_storage);
+
+		if (getpeername(ctrl, (struct sockaddr *)&addr, &len)) { 
 			/* error, log it and skip ip rate limiting */
 			syslog(LOG_ERR,
-				"%s/%s failed to get peer name of the connection",
-				sep->se_service,
-				sep->se_proto);
-				return 0;
+			    "%s/%s failed to get peer name of the connection",
+			    sep->se_service,
+			    sep->se_proto);
+			return 0;
 		}
-        	if (getnameinfo(&addr, addr.sa_len, hbuf, sizeof(hbuf), NULL,
-				0, NI_NUMERICHOST)){
-				/* error, log it and skip ip rate limiting */
+        	if (getnameinfo((struct sockaddr *)&addr, len, hbuf, 
+			sizeof(hbuf), NULL, 0, NI_NUMERICHOST)) {
+			/* error, log it and skip ip rate limiting */
 			syslog(LOG_ERR,
-				"%s/%s failed to get name info of the connection",
-				sep->se_service,
-				sep->se_proto);
+			    "%s/%s failed to get name info of the connection",
+			    sep->se_service,
+			    sep->se_proto);
 			return 0;
 		}
 		node = rl_try_get_ip(sep, hbuf);
@@ -2747,11 +2749,13 @@ rl_process(struct servtab *sep, int ctrl)
 				} else {
 					syslog(LOG_ERR,
                         		    "%s/%s max ip spawn rate (%zu in " 
-					    TOSTRING(CNT_INTVL) " seconds) "
+					    TOSTRING(CNT_INTVL) " seconds) for "
+					    "%." TOSTRING(NI_MAXHOST) "s "
                         		    "exceeded; service not started",
                         		    sep->se_service,
                         		    sep->se_proto,
-                        		    sep->se_ip_max);
+                        		    sep->se_ip_max,
+					    node->address);
 					time_fail = 1;
 					state = ERROR;
 				}

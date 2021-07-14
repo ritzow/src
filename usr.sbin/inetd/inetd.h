@@ -145,20 +145,22 @@ struct	servtab {
 	int	se_fd;			/* open descriptor */
 	service_type	se_type;		/* type */
 	union {
-		struct	sockaddr se_ctrladdr;
-		struct	sockaddr_in se_ctrladdr_in;
-		struct	sockaddr_in6 se_ctrladdr_in6; /* in6 is used by bind()/getaddrinfo */
-		struct	sockaddr_un se_ctrladdr_un;
-	};			/* bound address */
+		struct sockaddr	se_ctrladdr;
+		struct sockaddr_in	se_ctrladdr_in;
+		struct sockaddr_in6	se_ctrladdr_in6; /* in6 is used by bind()/getaddrinfo */
+		struct sockaddr_un	se_ctrladdr_un;
+	};				/* bound address */
 	socklen_t	se_ctrladdr_size;
 	size_t	se_service_max;		/* max # of instances of this service */
 	size_t	se_count;		/* number of instances of this service started since se_time */
 	size_t	se_ip_max;  		/* max # of instances of this service per ip per minute */
-	struct	se_ip_list_node{
-		char address[14];
-		size_t count;		/* number of instances of this service started from
-						this ip address since se_time */
+	struct se_ip_list_node {
 		struct se_ip_list_node	*next;
+		size_t count;		/* 
+					 * number of instances of this service started from
+					 * this ip address since se_time 
+					 */
+		char address[NI_MAXHOST];
 	} *se_ip_list_head; 		/* linked list of number of requests per ip */
 	struct	timeval se_time;	/* start of se_count */
 	struct	servtab *se_next;
@@ -207,5 +209,7 @@ parse_v2_result	parse_syntax_v2(struct servtab *, char **);
 #define SERVTAB_UNSPEC_VAL -1
 
 #define SERVTAB_UNSPEC_SIZE_T SIZE_MAX
+
+#define SERVTAB_COUNT_MAX (SIZE_MAX - (size_t)1)
 
 #endif
