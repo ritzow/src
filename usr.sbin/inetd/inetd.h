@@ -145,6 +145,7 @@ struct	servtab {
 	int	se_fd;			/* open descriptor */
 	service_type	se_type;		/* type */
 	union {
+		struct sockaddr_storage	se_ctrladdr_storage; /* ensure correctness of C struct initializer */
 		struct sockaddr	se_ctrladdr;
 		struct sockaddr_in	se_ctrladdr_in;
 		struct sockaddr_in6	se_ctrladdr_in6; /* in6 is used by bind()/getaddrinfo */

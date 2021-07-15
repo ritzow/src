@@ -321,6 +321,7 @@ static bool	check_no_reinclude(const char *);
 static void	include_matched_path(char *);
 static void	purge_unchecked(void);
 static void	config_root(void);
+static void	clear_ip_list(struct servtab *);
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
@@ -1016,8 +1017,7 @@ setsockopt(fd, SOL_SOCKET, opt, &on, (socklen_t)sizeof(on))
 	}
 #endif
 
-	if (bind(sep->se_fd, &sep->se_ctrladdr,
-	    (socklen_t)sep->se_ctrladdr_size) < 0) {
+	if (bind(sep->se_fd, &sep->se_ctrladdr, sep->se_ctrladdr_size) < 0) {
 		DPRINTF("bind failed on %s/%s: %s",
 			sep->se_service, sep->se_proto, strerror(errno));
 		syslog(LOG_ERR, "%s/%s: bind: %m",
@@ -1064,14 +1064,7 @@ close_sep(struct servtab *sep)
 	}
 	sep->se_count = 0;
 	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
-		struct se_ip_list_node *curr, *next;
-		curr = sep->se_ip_list_head;
-		while (curr != NULL) {
-			next = curr->next;
-			free(curr);
-			curr = next;
-		}
-		sep->se_ip_list_head = NULL;
+		clear_ip_list(sep);
 	}
 }
 
@@ -1322,7 +1315,7 @@ more:
 		sep->se_type = NORM_TYPE;
 	}
 
-	DPRINTCONF("Found positional service definition '%s'", sep->se_service);
+	DPRINTCONF("Found service definition '%s'", sep->se_service);
 
 	/* on/off/socktype */
 	arg = skip(&cp);
@@ -2658,27 +2651,16 @@ glob_error(const char *path, int error)
 	return 0;
 }
 
-enum rlpstate {
-	ERROR = 0,
-	DESTROY_IP_LIST = 1,
-	CREATE_IP_NODE = 2,
-	INC_IP_COUNT = 3
-};
-
-char rlpstate_strs[4][16] = {
-	"error",
-	"destroy_ip_list",
-	"create_ip_node",
-	"inc_ip_count"
-};
-
 static int
 rl_process(struct servtab *sep, int ctrl)
 {
 	struct se_ip_list_node *node;
-	enum rlpstate state;
 	struct timeval now;
-	int time_fail = 0;
+	enum {
+		SERVICE_MAX_FAIL,
+		IP_MAX_FAIL,
+		RL_SUCCESS
+	} time_fail = RL_SUCCESS;
 	bool istimevalid = false;
 	char hbuf[NI_MAXHOST];
 
@@ -2706,15 +2688,26 @@ rl_process(struct servtab *sep, int ctrl)
                             sep->se_service,
                             sep->se_proto,
                             sep->se_service_max);
-			time_fail = 1;
+			time_fail = SERVICE_MAX_FAIL;
 		}
 	}
-
-	/* TODO reduce redundacy between service_max and ip_max */
 
 	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
 		struct sockaddr_storage addr;
 		socklen_t len = sizeof(struct sockaddr_storage);
+		enum {
+			RL_ERROR = 0,
+			DESTROY_IP_LIST = 1,
+			CREATE_IP_NODE = 2,
+			INC_IP_COUNT = 3
+		} state;
+
+		static char rlpstate_strs[4][16] = {
+			"error",
+			"destroy_ip_list",
+			"create_ip_node",
+			"inc_ip_count"
+		};
 
 		if (getpeername(ctrl, (struct sockaddr *)&addr, &len)) { 
 			/* error, log it and skip ip rate limiting */
@@ -2739,7 +2732,7 @@ rl_process(struct servtab *sep, int ctrl)
 			DPRINTF(
 			    "This service has a se_ip_max of %zu and an ip_count of %zu",
 			    sep->se_ip_max, node->count);
-			if (node->count >= sep->se_ip_max - 1) {
+			if (node->count == sep->se_ip_max) {
 				if (!istimevalid) {
 					(void) gettimeofday(&now, NULL);
 				}
@@ -2751,13 +2744,13 @@ rl_process(struct servtab *sep, int ctrl)
                         		    "%s/%s max ip spawn rate (%zu in " 
 					    TOSTRING(CNT_INTVL) " seconds) for "
 					    "%." TOSTRING(NI_MAXHOST) "s "
-                        		    "exceeded; service not started",
+                        		    "exceeded; service not started.",
                         		    sep->se_service,
                         		    sep->se_proto,
                         		    sep->se_ip_max,
 					    node->address);
-					time_fail = 1;
-					state = ERROR;
+					time_fail = IP_MAX_FAIL;
+					state = RL_ERROR;
 				}
 			} else {
 				state = INC_IP_COUNT;
@@ -2772,34 +2765,38 @@ rl_process(struct servtab *sep, int ctrl)
 		
 		DPRINTF("ip rate limiting state %s for service %s",
 		    rlpstate_strs[state],
-		    sep->se_server);
+		    sep->se_service);
 
 		switch (state) {
 			case DESTROY_IP_LIST:
 				rl_reset(sep, &now);
-				// fall through
+				/* FALLTHROUGH */
 			case CREATE_IP_NODE:
 				node = rl_add(sep, hbuf);
-				// fall through
+				/* FALLTHROUGH */
 			case INC_IP_COUNT:
 				node->count++;
 				break;
-			default:
+			case RL_ERROR:
 				break;
 		}
 	}
 
-	if (time_fail) {
- 		if (!sep->se_wait && sep->se_socktype == SOCK_STREAM)
+	if (time_fail != RL_SUCCESS) {
+ 		if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
 			close(ctrl);
-		close_sep(sep);
-
-		if (!timingout) {
-			timingout = 1;
-			alarm(RETRYTIME);
 		}
 		
-		DPRINTF("Rate-limit exceeded, this service will not be started");
+		if(time_fail == SERVICE_MAX_FAIL) {
+			close_sep(sep);
+			if (!timingout) {
+				timingout = 1;
+				alarm(RETRYTIME);
+			}
+		}
+		
+		DPRINTF("Rate-limit exceeded for %s. "
+		    "Service will not be started.", sep->se_service);
 		return -1;
 	}
 
@@ -2813,9 +2810,15 @@ rl_add(struct servtab *sep, char* ip)
 	    "adding ip %s to service %s rate limiting tracking",
 	    ip, sep->se_server);
 
+	/* 
+	 * TODO memory could be saved by using a variable length malloc
+	 * with only the length of ip instead of the existing address field
+	 * NI_MAXHOST in length.
+	 */
 	struct se_ip_list_node* temp = malloc(sizeof(struct se_ip_list_node));
 	temp->count = 0;
-	strcpy(temp->address, ip);
+	temp->next = NULL;
+	strncpy(temp->address, ip, sizeof(temp->address));
 
 	if (sep->se_ip_list_head == NULL) {
 	/* List empty, insert as head */
@@ -2832,30 +2835,36 @@ rl_add(struct servtab *sep, char* ip)
 static void
 rl_reset(struct servtab *sep, struct timeval *now)
 {
-	DPRINTF("resetting rate limiting for service %s", sep->se_server);
+	DPRINTF("resetting rate limiting for service %s", sep->se_service);
 
 	sep->se_count = 1;
 	sep->se_time = *now;
 	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
-		struct se_ip_list_node *curr, *next;
-		curr = sep->se_ip_list_head;
-
-		while (curr != NULL) {
-			next = curr->next;
-			free(curr);
-			curr = next;
-		}
-		sep->se_ip_list_head = NULL;
+		clear_ip_list(sep);
 	}
 }
 
+static void
+clear_ip_list(struct servtab *sep) {
+	struct se_ip_list_node *curr, *next;
+	curr = sep->se_ip_list_head;
+
+	while (curr != NULL) {
+		next = curr->next;
+		free(curr);
+		curr = next;
+	}
+	sep->se_ip_list_head = NULL;
+}
+
 static struct se_ip_list_node *
-rl_try_get_ip(struct servtab *sep, char *ip){
+rl_try_get_ip(struct servtab *sep, char *ip)
+{
 	struct se_ip_list_node *curr = sep->se_ip_list_head; 
 
 	DPRINTF(
-	    "attempting to find ip %s for service %s rate limiting tracking",
-	    ip, sep->se_server);
+	    "look up ip %s for %s rate limiting",
+	    ip, sep->se_service);
 
 	while (curr != NULL) {
 		if (!strcmp(curr->address, ip)) {
