@@ -2651,6 +2651,7 @@ glob_error(const char *path, int error)
 	return 0;
 }
 
+/* Return 0 on allow, -1 if connection should be blocked */
 static int
 rl_process(struct servtab *sep, int ctrl)
 {
@@ -2709,13 +2710,43 @@ rl_process(struct servtab *sep, int ctrl)
 			"inc_ip_count"
 		};
 
-		if (getpeername(ctrl, (struct sockaddr *)&addr, &len)) { 
-			/* error, log it and skip ip rate limiting */
-			syslog(LOG_ERR,
-			    "%s/%s failed to get peer name of the connection",
-			    sep->se_service,
-			    sep->se_proto);
+		switch (sep->se_socktype) {
+		case SOCK_STREAM:
+			if (getpeername(ctrl, (struct sockaddr *)&addr, &len)) { 
+				/* error, log it and skip ip rate limiting */
+				syslog(LOG_ERR,
+				    "%s/%s failed to get peer name of the connection",
+				    sep->se_service,
+				    sep->se_proto);
+				return -1;
+			}
+			break;
+		case SOCK_DGRAM: {
+			struct msghdr header = {
+				.msg_name = &addr,
+				.msg_namelen = sizeof(struct sockaddr_storage),
+				/* scatter/gather and control info is null */
+			};
+			int count;
+			
+			/* Peek so service can still get the packet */
+			count = recvmsg(ctrl, &header, MSG_PEEK);
+			if (count == -1) {
+				syslog(LOG_ERR,
+				    "failed to get dgram source address: %s",
+				    strerror(errno));
+				    return -1;
+			}
+
+			len = header.msg_namelen;
+
+			break;
+		}
+		default:
+			DPRINTF("IP rate limiting not supported for socktype "
+			    "of service %s", sep->se_service);
 			return 0;
+			break;
 		}
         	if (getnameinfo((struct sockaddr *)&addr, len, hbuf, 
 			sizeof(hbuf), NULL, 0, NI_NUMERICHOST)) {
@@ -2724,7 +2755,7 @@ rl_process(struct servtab *sep, int ctrl)
 			    "%s/%s failed to get name info of the connection",
 			    sep->se_service,
 			    sep->se_proto);
-			return 0;
+			return -1;
 		}
 		node = rl_try_get_ip(sep, hbuf);
 

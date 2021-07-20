@@ -130,7 +130,7 @@ static struct key_handler {
 /* Error Not Initialized */
 #define ENI(key) ERR("Required option '%s' not specified", (key))
 
-#define WAIT_WRN "Option 'wait' for internal service '%s' should be '%s'"
+#define WAIT_WRN "Option 'wait' for internal service '%s' was inferred"
 
 /* Too Few Arguemnts (values) */
 #define TFA(key) ERR("Option '%s' has too few arguments", (key))
@@ -289,7 +289,7 @@ setup_internal(struct servtab *sep)
 	
 	if (wait_prev != SERVTAB_UNSPEC_VAL && wait_prev != sep->se_wait) {
 		/* If wait was already specified throw an error. */
-		WRN(WAIT_WRN, sep->se_service, (sep->se_wait ? "yes" : "no"));
+		WRN(WAIT_WRN, sep->se_service);
 	}
 	return true;
 }
@@ -875,7 +875,7 @@ static hresult
 wait_handler(struct servtab *sep, vlist values)
 {
 	char *val;
-	int wait;
+	pid_t wait;
 
 	/* If 'wait' is specified after internal exec */
 
@@ -897,13 +897,13 @@ wait_handler(struct servtab *sep, vlist values)
 	} else if (strcmp(val, "no") == 0) {
 		wait = false;
 	} else {
-		ERR("Invalid option for wait. Valid: yes, no");
+		ERR("Invalid value '%s' for wait. Valid: yes, no", val);
 		return KEY_HANDLER_FAILURE;
 	}
 
 	if (is_internal(sep) && wait != sep->se_wait) {
 		/* If wait was set for internal service check for correctness */
-		WRN(WAIT_WRN, sep->se_service, (sep->se_wait ? "yes" : "no"));
+		WRN(WAIT_WRN, sep->se_service);
 	} else if (parse_wait(sep, wait)) {
 		return KEY_HANDLER_FAILURE;
 	}
@@ -1051,9 +1051,9 @@ exec_handler(struct servtab *sep, vlist values)
 	if (parse_server(sep, val))
 		return KEY_HANDLER_FAILURE;
 	if (is_internal(sep) && wait_prev != SERVTAB_UNSPEC_VAL) {
-		/* Warn if the user specifies an incorrect wait value for an internal */
+		/* Warn if the user specifies a value for an internal which is different */
 		if (wait_prev != sep->se_wait) {
-			WRN(WAIT_WRN, sep->se_service, (sep->se_wait ? "yes" : "no"));
+			WRN(WAIT_WRN, sep->se_service);
 		}
 	}
 	
