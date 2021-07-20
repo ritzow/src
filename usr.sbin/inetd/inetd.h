@@ -122,7 +122,7 @@ struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
 	char	*se_service;		/* name of service */
 	int	se_socktype;		/* type of socket to use */
-	int	se_family;		/* address family */
+	sa_family_t	se_family;	/* address family */
 	char	*se_proto;		/* protocol used */
 	int	se_sndbuf;		/* sndbuf size */
 	int	se_rcvbuf;		/* rcvbuf size */
@@ -143,7 +143,7 @@ struct	servtab {
 #endif
 	struct accept_filter_arg se_accf; /* accept filter for stream service */
 	int	se_fd;			/* open descriptor */
-	service_type	se_type;		/* type */
+	service_type	se_type;	/* type */
 	union {
 		struct sockaddr_storage	se_ctrladdr_storage; /* ensure correctness of C struct initializer */
 		struct sockaddr	se_ctrladdr;
