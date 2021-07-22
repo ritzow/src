@@ -2679,7 +2679,9 @@ rl_process(struct servtab *sep, int ctrl)
 		now = rl_time();
 		sep->se_time = now;
 		istimevalid = true;
-	} else if (sep->se_count >= sep->se_service_max) {
+	}
+	
+	if (sep->se_count >= sep->se_service_max) {
 		now = rl_time();
 		istimevalid = true;
 		if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
