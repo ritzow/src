@@ -309,7 +309,7 @@ static void	spawn(struct servtab *, int);
 static struct servtab	init_servtab(void);
 static int	rl_process(struct servtab *, int);
 static struct se_ip_list_node	*rl_add(struct servtab *, char *);
-static void	rl_reset(struct servtab *, struct timeval *);
+static void	rl_reset(struct servtab *, struct timespec);
 static struct se_ip_list_node	*rl_try_get_ip(struct servtab *, char *);
 static void	include_configs(char *);
 static int	glob_error(const char *, int);
@@ -322,6 +322,7 @@ static void	include_matched_path(char *);
 static void	purge_unchecked(void);
 static void	config_root(void);
 static void	clear_ip_list(struct servtab *);
+static struct timespec	rl_time(void);
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
@@ -475,16 +476,17 @@ main(int argc, char *argv[])
 			/* Paranoia */
 			if ((int)ev->ident != sep->se_fd)
 				continue;
-			DPRINTF("someone wants %s", sep->se_service);
+			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
 			if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
 				/* XXX here do the libwrap check-before-accept*/
 				ctrl = accept(sep->se_fd, NULL, NULL);
-				DPRINTF("accept, ctrl %d", ctrl);
+				DPRINTF(SERV_FMT ": accept, ctrl fd %d", 
+				    SERV_PARAMS(sep), ctrl);
 				if (ctrl < 0) {
 					if (errno != EINTR)
 						syslog(LOG_WARNING,
-						    "accept (for %s): %m",
-						    sep->se_service);
+						    SERV_FMT ": accept: %m",
+						    SERV_PARAMS(sep));
 					continue;
 				}
 			} else
@@ -638,7 +640,8 @@ run_service(int ctrl, struct servtab *sep, int didfork)
 		} else if (sep->se_group) {
 			(void) setgid((gid_t)grp->gr_gid);
 		}
-		DPRINTF("%d execl %s", getpid(), sep->se_server);
+		DPRINTF(SERV_FMT ": %d execl %s", SERV_PARAMS(sep), 
+		    getpid(), sep->se_server);
 		/* Set our control descriptor to not close-on-exec... */
 		if (fcntl(ctrl, F_SETFD, 0) < 0)
 			syslog(LOG_ERR, "fcntl (%d, F_SETFD, 0): %m", ctrl);
@@ -781,8 +784,8 @@ config(void)
 				break;
 			n = strlen(sep->se_service);
 			if (n >= sizeof(sep->se_ctrladdr_un.sun_path)) {
-				syslog(LOG_ERR, "%s: address too long",
-				    sep->se_service);
+				syslog(LOG_ERR, "%s/%s: address too long",
+				    sep->se_service, sep->se_proto);
 				sep->se_checked = 0;
 				continue;
 			}
@@ -836,12 +839,12 @@ config(void)
 			if (error) {
 				if (error == EAI_SERVICE) {
 					/* gai_strerror not friendly enough */
-					syslog(LOG_WARNING, "%s/%s: "
+					syslog(LOG_WARNING, SERV_FMT ": "
 					    "unknown service",
-					    sep->se_service, sep->se_proto);
+					    SERV_PARAMS(sep));
 				} else {
-					syslog(LOG_ERR, "%s/%s: %s: %s",
-					    sep->se_service, sep->se_proto,
+					syslog(LOG_ERR, SERV_FMT ": %s: %s",
+					    SERV_PARAMS(sep),
 					    sep->se_hostaddr,
 					    gai_strerror(error));
 				}
@@ -850,8 +853,8 @@ config(void)
 			}
 			if (res->ai_next) {
 				syslog(LOG_ERR,
-					"%s/%s: %s: resolved to multiple addr",
-				    sep->se_service, sep->se_proto,
+					SERV_FMT ": %s: resolved to multiple addr",
+				    SERV_PARAMS(sep),
 				    sep->se_hostaddr);
 				sep->se_checked = 0;
 				freeaddrinfo(res);
@@ -875,9 +878,9 @@ config(void)
 					rp = getrpcbyname(sep->se_service);
 					if (rp == 0) {
 						syslog(LOG_ERR,
-						    "%s/%s: unknown service",
-						    sep->se_service,
-						    sep->se_proto);
+						    SERV_FMT 
+						    ": unknown service",
+						    SERV_PARAMS(sep));
 						sep->se_checked = 0;
 						continue;
 					}
@@ -961,16 +964,16 @@ setup(struct servtab *sep)
 	struct kevent	*ev;
 
 	if ((sep->se_fd = socket(sep->se_family, sep->se_socktype, 0)) < 0) {
-		DPRINTF("socket failed on %s/%s: %s", 
-		    sep->se_service, sep->se_proto, strerror(errno));
+		DPRINTF("socket failed on " SERV_FMT ": %s", 
+		    SERV_PARAMS(sep), strerror(errno));
 		syslog(LOG_ERR, "%s/%s: socket: %m",
 		    sep->se_service, sep->se_proto);
 		return;
 	}
 	/* Set all listening sockets to close-on-exec. */
 	if (fcntl(sep->se_fd, F_SETFD, FD_CLOEXEC) < 0) {
-		syslog(LOG_ERR, "%s/%s: fcntl(F_SETFD, FD_CLOEXEC): %m",
-		    sep->se_service, sep->se_proto);
+		syslog(LOG_ERR, SERV_FMT ": fcntl(F_SETFD, FD_CLOEXEC): %m",
+		    SERV_PARAMS(sep));
 		close(sep->se_fd);
 		sep->se_fd = -1;
 		return;
@@ -1008,8 +1011,8 @@ setsockopt(fd, SOL_SOCKET, opt, &on, (socklen_t)sizeof(on))
 	if (sep->se_policy != NULL) {
 		int e = ipsecsetup(sep->se_family, sep->se_fd, sep->se_policy);
 		if (e < 0) {
-			syslog(LOG_ERR, "%s/%s: ipsec setup failed",
-			    sep->se_service, sep->se_proto);
+			syslog(LOG_ERR, SERV_FMT ": ipsec setup failed",
+			    SERV_PARAMS(sep));
 			(void)close(sep->se_fd);
 			sep->se_fd = -1;
 			return;
@@ -1018,10 +1021,10 @@ setsockopt(fd, SOL_SOCKET, opt, &on, (socklen_t)sizeof(on))
 #endif
 
 	if (bind(sep->se_fd, &sep->se_ctrladdr, sep->se_ctrladdr_size) < 0) {
-		DPRINTF("bind failed on %s/%s: %s",
-			sep->se_service, sep->se_proto, strerror(errno));
-		syslog(LOG_ERR, "%s/%s: bind: %m",
-		    sep->se_service, sep->se_proto);
+		DPRINTF(SERV_FMT ": bind failed: %s",
+			SERV_PARAMS(sep), strerror(errno));
+		syslog(LOG_ERR, SERV_FMT ": bind: %m",
+		    SERV_PARAMS(sep));
 		(void) close(sep->se_fd);
 		sep->se_fd = -1;
 		if (!timingout) {
@@ -1048,7 +1051,7 @@ setsockopt(fd, SOL_SOCKET, opt, &on, (socklen_t)sizeof(on))
 		if (maxsock > (int)(rlim_ofile_cur - FD_MARGIN))
 			bump_nofile();
 	}
-	DPRINTF("registered %s on %d", sep->se_server, sep->se_fd);
+	DPRINTF(SERV_FMT ": registered on fd %d", SERV_PARAMS(sep), sep->se_fd);
 }
 
 /*
@@ -1085,8 +1088,8 @@ register_rpc(struct servtab *sep)
 	}
 	socklen = sizeof ss;
 	if (getsockname(sep->se_fd, (struct sockaddr *)(void *)&ss, &socklen) < 0) {
-		syslog(LOG_ERR, "%s/%s: getsockname: %m",
-		    sep->se_service, sep->se_proto);
+		syslog(LOG_ERR, SERV_FMT ": getsockname: %m",
+		    SERV_PARAMS(sep));
 		return;
 	}
 
@@ -2071,7 +2074,7 @@ tcpmux(int ctrl, struct servtab *sep)
 	}
 	service[len] = '\0';
 
-	DPRINTF("tcpmux: someone wants %s", service);
+	DPRINTF("tcpmux: %s: service requested", service);
 
 	/*
 	 * Help is a required command, and lists available services,
@@ -2656,7 +2659,7 @@ static int
 rl_process(struct servtab *sep, int ctrl)
 {
 	struct se_ip_list_node *node;
-	struct timeval now;
+	struct timespec now;
 	enum {
 		SERVICE_MAX_FAIL,
 		IP_MAX_FAIL,
@@ -2665,28 +2668,27 @@ rl_process(struct servtab *sep, int ctrl)
 	bool istimevalid = false;
 	char hbuf[NI_MAXHOST];
 
-	DPRINTF("Processing rate-limiting for service %s",
-	    sep->se_service);
-	DPRINTF("service %s has se_service_max "
-	    "of %zu, and se_count of %zu", sep->se_service,
+	DPRINTF(SERV_FMT ": processing rate-limiting",
+	    SERV_PARAMS(sep));
+	DPRINTF(SERV_FMT ": se_service_max "
+	    "%zu and se_count %zu", SERV_PARAMS(sep),
 	    sep->se_service_max, sep->se_count);
 
 	if (sep->se_count++ == 0) {
-		(void) gettimeofday(&now, NULL);
+		now = rl_time();
 		sep->se_time = now;
 		istimevalid = true;
 	} else if (sep->se_count >= sep->se_service_max) {
-		(void) gettimeofday(&now, NULL);
+		now = rl_time();
 		istimevalid = true;
 		if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
-			rl_reset(sep, &now);
+			rl_reset(sep, now);
 		} else {
 			syslog(LOG_ERR,
-                            "%s/%s max spawn rate (%zu in " 
+                            SERV_FMT ": max spawn rate (%zu in " 
 			    TOSTRING(CNT_INTVL) " seconds) "
                             "exceeded; service not started",
-                            sep->se_service,
-                            sep->se_proto,
+                            SERV_PARAMS(sep),
                             sep->se_service_max);
 			time_fail = SERVICE_MAX_FAIL;
 		}
@@ -2695,22 +2697,14 @@ rl_process(struct servtab *sep, int ctrl)
 	if (time_fail == RL_SUCCESS && sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
 		struct sockaddr_storage addr;
 		socklen_t len = sizeof(struct sockaddr_storage);
-		enum {
-			RL_ERROR = 0,
-			DESTROY_IP_LIST = 1,
-			CREATE_IP_NODE = 2,
-			INC_IP_COUNT = 3
-		} state;
-
 		switch (sep->se_socktype) {
 		case SOCK_STREAM:
 			if (getpeername(ctrl, (struct sockaddr *)&addr, &len)) { 
 				/* error, log it and skip ip rate limiting */
 				syslog(LOG_ERR,
-				    "%s/%s failed to get peer name of the connection",
-				    sep->se_service,
-				    sep->se_proto);
-				return -1;
+				    SERV_FMT " failed to get peer name of the "
+				    "connection", SERV_PARAMS(sep));
+				exit(EXIT_FAILURE);
 			}
 			break;
 		case SOCK_DGRAM: {
@@ -2725,103 +2719,107 @@ rl_process(struct servtab *sep, int ctrl)
 			count = recvmsg(ctrl, &header, MSG_PEEK);
 			if (count == -1) {
 				syslog(LOG_ERR,
-				    "failed to get dgram source address: %s",
+				    "failed to get dgram source address: %s; exiting",
 				    strerror(errno));
-				    return -1;
+				exit(EXIT_FAILURE);
 			}
 			break;
 		}
 		default:
-			DPRINTF("IP rate limiting not supported for socktype "
-			    "of service %s", sep->se_service);
+			DPRINTF(SERV_FMT ": ip_max rate limiting not supported for "
+			    "socktype ", SERV_PARAMS(sep));
 			return 0;
-			break;
 		}
 
         	if (getnameinfo((struct sockaddr *)&addr, 
-		    ((struct sockaddr *)&addr)->sa_len, hbuf, 
+		    addr.ss_len, hbuf,
 		    sizeof(hbuf), NULL, 0, NI_NUMERICHOST)) {
 			/* error, log it and skip ip rate limiting */
 			syslog(LOG_ERR,
-			    "%s/%s failed to get name info of the connection",
-			    sep->se_service,
-			    sep->se_proto);
-			return -1;
+			    SERV_FMT ": failed to get name info of the incoming connection",
+			    SERV_PARAMS(sep));
+			exit(EXIT_FAILURE);
 		}
 		node = rl_try_get_ip(sep, hbuf);
 
 		if (node != NULL) {
 			DPRINTF(
-			    "This service has se_ip_max %zu and ip_count %zu",
-			    sep->se_ip_max, node->count);
+			    SERV_FMT ": se_ip_max %zu and ip_count %zu",
+			    SERV_PARAMS(sep), sep->se_ip_max, node->count);
 			if (node->count >= sep->se_ip_max) {
+				/*
+				 * No need to keep track of requests over the IP
+				 * limit by incrementing since it will just get
+				 * reset by the next time reset anyways 
+				 */
 				if (!istimevalid) {
-					(void) gettimeofday(&now, NULL);
+					now = rl_time();
 				}
 			
 				if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
-					state = DESTROY_IP_LIST;
+					rl_reset(sep, now);
+					node = rl_add(sep, hbuf);
 				} else {
 					if (debug) {
 						/* Only log during debug to prevent
 						DoS attack writing to system log */
 						syslog(LOG_ERR,
-                        		   	    "%s/%s max ip spawn rate (%zu in " 
+                        		   	    SERV_FMT ": max ip spawn rate (%zu in " 
 					   	    TOSTRING(CNT_INTVL) " seconds) for "
 					   	    "%." TOSTRING(NI_MAXHOST) "s "
-                        		   	    "exceeded; service not started.",
-                        		   	    sep->se_service,
-                        		   	    sep->se_proto,
+                        		   	    "exceeded; service not started",
+                        		   	    SERV_PARAMS(sep),
                         		   	    sep->se_ip_max,
 					   	    node->address);
 					}
 					time_fail = IP_MAX_FAIL;
-					state = RL_ERROR;
 				}
 			} else {
-				state = INC_IP_COUNT;
+				node->count++;
 			}
 		} else {
 			DPRINTF(
-			    "This service has a se_ip_max of %zu and does not "
-			    "have a ip_node associated with the requesting ip",
-			    sep->se_ip_max);
-			state = CREATE_IP_NODE;
-		}
-
-		{
-			static char rlpstate_strs[4][16] = {
-				"error",
-				"destroy_ip_list",
-				"create_ip_node",
-				"inc_ip_count"
-			};
-			DPRINTF("ip rate limiting state %s for service %s",
-			    rlpstate_strs[state],
-			    sep->se_service);
-		}
-
-		switch (state) {
-			case DESTROY_IP_LIST:
-				rl_reset(sep, &now);
-				/* FALLTHROUGH */
-			case CREATE_IP_NODE:
-				node = rl_add(sep, hbuf);
-				/* FALLTHROUGH */
-			case INC_IP_COUNT:
-				node->count++;
-				break;
-			case RL_ERROR:
-				break;
+			    SERV_FMT ": se_ip_max of %zu and has no ip_node",
+			    SERV_PARAMS(sep), sep->se_ip_max);
+			node = rl_add(sep, hbuf);
 		}
 	}
 
 	if (time_fail != RL_SUCCESS) {
+
+		DPRINTF(SERV_FMT ": rate-limit exceeded; " 
+		    "service not started", SERV_PARAMS(sep));
+
  		if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
+			 /* 
+			  * If the fd isn't a listen socket, 
+			  * close the individual connection too. 
+			  */
 			close(ctrl);
+		}
+
+		if (!sep->se_wait && sep->se_socktype == SOCK_DGRAM) {
+			/* 
+			 * Drop the single datagram the service would have
+			 * consumed.
+			 */
+			struct msghdr header = {
+				/* All fields null, just consume one message */
+			};
+			int count;
+			
+			count = recvmsg(ctrl, &header, 0);
+			if (count == -1) {
+				syslog(LOG_ERR,
+				    SERV_FMT ": failed to consume nowait dgram: %s",
+				    SERV_PARAMS(sep), strerror(errno));
+				exit(EXIT_FAILURE);
+			}
 		}
 		
 		if(time_fail == SERVICE_MAX_FAIL) {
+			DPRINTF(SERV_FMT ": closing until end of timeout in "
+			    "%zu seconds", SERV_PARAMS(sep), (uintmax_t)RETRYTIME);
 			close_sep(sep);
 			if (!timingout) {
 				timingout = 1;
@@ -2829,20 +2827,31 @@ rl_process(struct servtab *sep, int ctrl)
 			}
 		}
 		
-		DPRINTF("Rate-limit exceeded for %s. "
-		    "Service will not be started.", sep->se_service);
 		return -1;
 	}
 
 	return 0;	
 }
 
+static struct timespec 
+rl_time()
+{
+	struct timespec time;
+	if(clock_gettime(CLOCK_MONOTONIC, &time) == -1) {
+		syslog(LOG_ERR, "clock_gettime for rate limiting failed: %s; "
+		    "exiting", strerror(errno));
+		/* Exit inetd if rate limiting fails */
+		exit(EXIT_FAILURE);
+	}
+	return time;
+}
+
 static struct se_ip_list_node*
 rl_add(struct servtab *sep, char* ip)
 {
 	DPRINTF(
-	    "adding ip %s to service %s rate limiting tracking",
-	    ip, sep->se_server);
+	    SERV_FMT ": add ip %s to rate limiting tracking",
+	    SERV_PARAMS(sep), ip);
 
 	/* 
 	 * TODO memory could be saved by using a variable length malloc
@@ -2850,7 +2859,7 @@ rl_add(struct servtab *sep, char* ip)
 	 * NI_MAXHOST in length.
 	 */
 	struct se_ip_list_node* temp = malloc(sizeof(struct se_ip_list_node));
-	temp->count = 0;
+	temp->count = 1;
 	temp->next = NULL;
 	strncpy(temp->address, ip, sizeof(temp->address));
 
@@ -2867,12 +2876,13 @@ rl_add(struct servtab *sep, char* ip)
 }
 
 static void
-rl_reset(struct servtab *sep, struct timeval *now)
+rl_reset(struct servtab *sep, struct timespec now)
 {
-	DPRINTF("resetting rate limiting for service %s", sep->se_service);
+	DPRINTF(SERV_FMT ": %zu seconds passed; resetting rate limiting ", 
+	    SERV_PARAMS(sep), (uintmax_t)now.tv_sec - sep->se_time.tv_sec);
 
 	sep->se_count = 1;
-	sep->se_time = *now;
+	sep->se_time = now;
 	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
 		clear_ip_list(sep);
 	}
@@ -2897,8 +2907,8 @@ rl_try_get_ip(struct servtab *sep, char *ip)
 	struct se_ip_list_node *curr = sep->se_ip_list_head; 
 
 	DPRINTF(
-	    "look up ip %s for %s IP rate limiting",
-	    ip, sep->se_service);
+	    SERV_FMT ": look up ip %s for ip_max rate limiting",
+		SERV_PARAMS(sep), ip);
 
 	while (curr != NULL) {
 		if (!strcmp(curr->address, ip)) {

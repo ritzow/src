@@ -284,8 +284,8 @@ entry is used to tell
 .Nm
 if it should wait for the server program to return,
 or continue processing connections on the socket.
-If a datagram server connects
-to its peer, freeing the socket so
+If a datagram server reads a single datagram and connects
+to its peer through a different socket, freeing the service's socket so
 .Nm
 can receive further messages on the socket, it is said to be
 a
@@ -475,10 +475,12 @@ and SO_ACCEPTFITLER in
 .It Sy protocol
 Equivalent to 
 .Em protocol
-is "tcp" or "udp", with no version specifier, the associated hostname or 
+in positional notation.
+If specified as "tcp" or "udp" with no version specifier, the associated 
+hostname or 
 .Em bind
 value is used
-to determine the IP version. If IP version is not specified and the hostname
+to determine the IP version. If the version is not specified and the hostname
 string or
 .Em bind
 value is not an IPv4 or IPv6 address, the
@@ -498,8 +500,8 @@ in positional notation.
 The value 
 .Em yes
 or
-.Em no
-\&. Equivalent to 
+.Em no .
+Equivalent to 
 .Em wait/nowait 
 in positional notation. This option is automatically determined for internal 
 services, and is mandatory for all others.
@@ -541,10 +543,10 @@ the program.
 .It Sy ipsec
 An IPsec policy string. Defaults to the global default setting. If 
 specified without a value (i.e. “ipsec=,”), IPsec will be disabled for this 
-service. See
-.Xs Directives
-for details. Currently only one value is allowed, so all IPsec policies should
-be in a quoted string, separated by semicolons.
+service. See the
+.Sx Directives
+section for details. Currently only one value is allowed, so all IPsec policies 
+should be in a quoted string, separated by semicolons.
 .El
 
 .Ss Directives
@@ -622,7 +624,9 @@ included individually without the use of glob patterns. Behavior is undefined if
 multiple include directives include the same file and
 this should be avoided. Circular references are caught by inetd. Anything after
 .Em glob-path
-is ignored.
+on the same line is ignored.
+.Em glob-path
+may be in quotes.
 .Ss Internal Services
 .Nm
 provides several

@@ -163,7 +163,7 @@ struct	servtab {
 					 */
 		char address[NI_MAXHOST];
 	} *se_ip_list_head; 		/* linked list of number of requests per ip */
-	struct	timeval se_time;	/* start of se_count */
+	struct	timespec se_time;	/* start of se_count and ip_max counts */
 	struct	servtab *se_next;
 };
 
@@ -212,5 +212,9 @@ parse_v2_result	parse_syntax_v2(struct servtab *, char **);
 #define SERVTAB_UNSPEC_SIZE_T SIZE_MAX
 
 #define SERVTAB_COUNT_MAX (SIZE_MAX - (size_t)1)
+
+/* Standard logging and debug print format for a servtab */
+#define SERV_FMT "%s/%s"
+#define SERV_PARAMS(sep) sep->se_service,sep->se_proto
 
 #endif
