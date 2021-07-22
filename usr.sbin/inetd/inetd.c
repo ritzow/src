@@ -2674,7 +2674,8 @@ rl_process(struct servtab *sep, int ctrl)
 	    "%zu and se_count %zu", SERV_PARAMS(sep),
 	    sep->se_service_max, sep->se_count);
 
-	if (sep->se_count++ == 0) {
+	/* se_count is incremented when rl_process returns 0 */
+	if (sep->se_count == 0) {
 		now = rl_time();
 		sep->se_time = now;
 		istimevalid = true;
@@ -2728,6 +2729,7 @@ rl_process(struct servtab *sep, int ctrl)
 		default:
 			DPRINTF(SERV_FMT ": ip_max rate limiting not supported for "
 			    "socktype ", SERV_PARAMS(sep));
+			sep->se_count++;
 			return 0;
 		}
 
@@ -2798,10 +2800,12 @@ rl_process(struct servtab *sep, int ctrl)
 			close(ctrl);
 		}
 
-		if (!sep->se_wait && sep->se_socktype == SOCK_DGRAM) {
+		if (sep->se_socktype == SOCK_DGRAM) {
 			/* 
 			 * Drop the single datagram the service would have
-			 * consumed.
+			 * consumed if nowait. If this is a wait service, this
+			 * will consume 1 datagram, and further received packets
+			 * will be removed in the same process.
 			 */
 			struct msghdr header = {
 				/* All fields null, just consume one message */
@@ -2830,6 +2834,7 @@ rl_process(struct servtab *sep, int ctrl)
 		return -1;
 	}
 
+	sep->se_count++;
 	return 0;	
 }
 
