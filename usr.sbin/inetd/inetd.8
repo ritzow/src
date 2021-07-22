@@ -850,14 +850,8 @@ specifiers do apply to RPC lines with no explicit specifier.)
 on IPv6 is not tested enough.
 .Pp
 When
-.Em max
-is set to a value <= 0 for a given service using positional notation, one service 
-is started. In key-value notation, this behavior is the same when
-.Em service_max
-and/or
-.Em ip_max
-are set to 0; however, when set to values < 0, the definition parses as invalid 
-and is ignored.
+.Em max/service_max
+is set to 0 for a service, one service may still be started.
 .Em max
 and
 .Em service_max
