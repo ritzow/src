@@ -159,7 +159,8 @@ struct	servtab {
 		struct se_ip_list_node	*next;
 		size_t count;		/* 
 					 * number of instances of this service started from
-					 * this ip address since se_time 
+					 * this ip address since se_time (includes 
+					 * attempted starts if greater than se_ip_max)
 					 */
 		char address[NI_MAXHOST];
 	} *se_ip_list_head; 		/* linked list of number of requests per ip */

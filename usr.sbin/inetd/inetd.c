@@ -2674,7 +2674,7 @@ rl_process(struct servtab *sep, int ctrl)
 	    "%zu and se_count %zu", SERV_PARAMS(sep),
 	    sep->se_service_max, sep->se_count);
 
-	/* se_count is incremented when rl_process returns 0 */
+	/* se_count is incremented if rl_process will return 0 */
 	if (sep->se_count == 0) {
 		now = rl_time();
 		sep->se_time = now;
@@ -2687,13 +2687,13 @@ rl_process(struct servtab *sep, int ctrl)
 		if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
 			rl_reset(sep, now);
 		} else {
+			time_fail = SERVICE_MAX_FAIL;
 			syslog(LOG_ERR,
                             SERV_FMT ": max spawn rate (%zu in " 
 			    TOSTRING(CNT_INTVL) " seconds) "
                             "exceeded; service not started",
                             SERV_PARAMS(sep),
                             sep->se_service_max);
-			time_fail = SERVICE_MAX_FAIL;
 		}
 	}
 
@@ -2740,53 +2740,57 @@ rl_process(struct servtab *sep, int ctrl)
 		    sizeof(hbuf), NULL, 0, NI_NUMERICHOST)) {
 			/* error, log it and skip ip rate limiting */
 			syslog(LOG_ERR,
-			    SERV_FMT ": failed to get name info of the incoming connection",
+			    SERV_FMT ": failed to get name info of the incoming connection; exiting",
 			    SERV_PARAMS(sep));
 			exit(EXIT_FAILURE);
 		}
+
 		node = rl_try_get_ip(sep, hbuf);
 
-		if (node != NULL) {
-			DPRINTF(
-			    SERV_FMT ": se_ip_max %zu and ip_count %zu",
-			    SERV_PARAMS(sep), sep->se_ip_max, node->count);
-			if (node->count >= sep->se_ip_max) {
-				/*
-				 * No need to keep track of requests over the IP
-				 * limit by incrementing since it will just get
-				 * reset by the next time reset anyways 
-				 */
-				if (!istimevalid) {
-					now = rl_time();
-				}
-			
-				if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
-					rl_reset(sep, now);
-					node = rl_add(sep, hbuf);
-				} else {
-					if (debug) {
-						/* Only log during debug to prevent
-						DoS attack writing to system log */
-						syslog(LOG_ERR,
-                        		   	    SERV_FMT ": max ip spawn rate (%zu in " 
-					   	    TOSTRING(CNT_INTVL) " seconds) for "
-					   	    "%." TOSTRING(NI_MAXHOST) "s "
-                        		   	    "exceeded; service not started",
-                        		   	    SERV_PARAMS(sep),
-                        		   	    sep->se_ip_max,
-					   	    node->address);
-					}
-					time_fail = IP_MAX_FAIL;
-				}
-			} else {
-				node->count++;
-			}
-		} else {
-			DPRINTF(
-			    SERV_FMT ": se_ip_max of %zu and has no ip_node",
-			    SERV_PARAMS(sep), sep->se_ip_max);
+		if(node == NULL) {
 			node = rl_add(sep, hbuf);
 		}
+
+		DPRINTF(
+		    SERV_FMT ": se_ip_max %zu and ip_count %zu",
+		    SERV_PARAMS(sep), sep->se_ip_max, node->count);
+		
+		if (node->count >= sep->se_ip_max) {
+			/*
+			 * No need to keep track of requests over the IP
+			 * limit by incrementing since it will just get
+			 * reset by the next time reset anyways 
+			 */
+
+			if (!istimevalid) {
+				/* 
+				 * Only get the clock time if we didn't
+				 * already 
+				 */
+				now = rl_time();
+			}
+		
+			if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
+				rl_reset(sep, now);
+				node = rl_add(sep, hbuf);
+			} else {
+				time_fail = IP_MAX_FAIL;
+				if (debug && node->count == sep->se_ip_max) {
+					/* Only log first failed request to prevent
+					DoS attack writing to system log */
+					syslog(LOG_ERR,
+					    SERV_FMT ": max ip spawn rate (%zu in " 
+					    TOSTRING(CNT_INTVL) " seconds) for "
+					    "%." TOSTRING(NI_MAXHOST) "s "
+					    "exceeded; service not started",
+					    SERV_PARAMS(sep),
+					    sep->se_ip_max,
+					    node->address);
+				}
+			}
+		}
+		/* Increment process starts or attempted starts */
+		node->count++;
 	}
 
 	if (time_fail != RL_SUCCESS) {
@@ -2866,7 +2870,7 @@ rl_add(struct servtab *sep, char* ip)
 	 * NI_MAXHOST in length.
 	 */
 	struct se_ip_list_node* temp = malloc(sizeof(struct se_ip_list_node));
-	temp->count = 1;
+	temp->count = 0;
 	temp->next = NULL;
 	strncpy(temp->address, ip, sizeof(temp->address));
 
@@ -2888,7 +2892,7 @@ rl_reset(struct servtab *sep, struct timespec now)
 	DPRINTF(SERV_FMT ": %zu seconds passed; resetting rate limiting ", 
 	    SERV_PARAMS(sep), (uintmax_t)now.tv_sec - sep->se_time.tv_sec);
 
-	sep->se_count = 1;
+	sep->se_count = 0;
 	sep->se_time = now;
 	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
 		clear_ip_list(sep);
@@ -2915,7 +2919,7 @@ rl_try_get_ip(struct servtab *sep, char *ip)
 
 	DPRINTF(
 	    SERV_FMT ": look up ip %s for ip_max rate limiting",
-		SERV_PARAMS(sep), ip);
+	        SERV_PARAMS(sep), ip);
 
 	while (curr != NULL) {
 		if (!strcmp(curr->address, ip)) {
