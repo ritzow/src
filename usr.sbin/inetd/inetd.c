@@ -242,7 +242,7 @@ int allow_severity = LIBWRAP_ALLOW_FACILITY|LIBWRAP_ALLOW_SEVERITY;
 int deny_severity = LIBWRAP_DENY_FACILITY|LIBWRAP_DENY_SEVERITY;
 #endif
 
-#define	CNT_INTVL	60		/* servers in CNT_INTVL sec. */
+#define	CNT_INTVL	((time_t)60)	/* servers in CNT_INTVL sec. */
 #define	RETRYTIME	(60*10)		/* retry after bind or server fail */
 
 int	debug;
@@ -309,7 +309,7 @@ static void	spawn(struct servtab *, int);
 static struct servtab	init_servtab(void);
 static int	rl_process(struct servtab *, int);
 static struct se_ip_list_node	*rl_add(struct servtab *, char *);
-static void	rl_reset(struct servtab *, struct timespec);
+static void	rl_reset(struct servtab *, time_t);
 static struct se_ip_list_node	*rl_try_get_ip(struct servtab *, char *);
 static void	include_configs(char *);
 static int	glob_error(const char *, int);
@@ -322,7 +322,9 @@ static void	include_matched_path(char *);
 static void	purge_unchecked(void);
 static void	config_root(void);
 static void	clear_ip_list(struct servtab *);
-static struct timespec	rl_time(void);
+static time_t	rl_time(void);
+static void	rl_get_name(struct servtab *, int, char *);
+static void	rl_drop_connection(struct servtab *, int);
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
@@ -640,7 +642,7 @@ run_service(int ctrl, struct servtab *sep, int didfork)
 		} else if (sep->se_group) {
 			(void) setgid((gid_t)grp->gr_gid);
 		}
-		DPRINTF(SERV_FMT ": %d execl %s", SERV_PARAMS(sep), 
+		DPRINTF("%d execl %s", 
 		    getpid(), sep->se_server);
 		/* Set our control descriptor to not close-on-exec... */
 		if (fcntl(ctrl, F_SETFD, 0) < 0)
@@ -2659,12 +2661,7 @@ static int
 rl_process(struct servtab *sep, int ctrl)
 {
 	struct se_ip_list_node *node;
-	struct timespec now;
-	enum {
-		SERVICE_MAX_FAIL,
-		IP_MAX_FAIL,
-		RL_SUCCESS
-	} time_fail = RL_SUCCESS;
+	time_t now = 0; /* 0 prevents GCC from complaining */
 	bool istimevalid = false;
 	char hbuf[NI_MAXHOST];
 
@@ -2682,71 +2679,42 @@ rl_process(struct servtab *sep, int ctrl)
 	}
 	
 	if (sep->se_count >= sep->se_service_max) {
-		now = rl_time();
-		istimevalid = true;
-		if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
+		if(!istimevalid) {
+			now = rl_time();
+			istimevalid = true;
+		}
+		
+		if (now - sep->se_time > CNT_INTVL) {
 			rl_reset(sep, now);
 		} else {
-			time_fail = SERVICE_MAX_FAIL;
 			syslog(LOG_ERR,
-                            SERV_FMT ": max spawn rate (%zu in " 
-			    TOSTRING(CNT_INTVL) " seconds) "
-                            "exceeded; service not started",
+                            SERV_FMT ": max spawn rate (%zu in %zi seconds) "
+                            "already met, closing until end of timeout in "
+			    "%zu seconds",
                             SERV_PARAMS(sep),
-                            sep->se_service_max);
+                            sep->se_service_max,
+			    (intmax_t)CNT_INTVL,
+			    (uintmax_t)RETRYTIME);
+
+			DPRINTF(SERV_FMT ": service not started",
+			    SERV_PARAMS(sep));
+
+			rl_drop_connection(sep, ctrl);
+
+			/* Close the server for 10 minutes */
+			close_sep(sep);
+			if (!timingout) {
+				timingout = 1;
+				alarm(RETRYTIME);
+			}
+
+			return -1;
 		}
 	}
 
-	if (time_fail == RL_SUCCESS && sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
-		struct sockaddr_storage addr;
-		socklen_t len = sizeof(struct sockaddr_storage);
-		switch (sep->se_socktype) {
-		case SOCK_STREAM:
-			if (getpeername(ctrl, (struct sockaddr *)&addr, &len)) { 
-				/* error, log it and skip ip rate limiting */
-				syslog(LOG_ERR,
-				    SERV_FMT " failed to get peer name of the "
-				    "connection", SERV_PARAMS(sep));
-				exit(EXIT_FAILURE);
-			}
-			break;
-		case SOCK_DGRAM: {
-			struct msghdr header = {
-				.msg_name = &addr,
-				.msg_namelen = sizeof(struct sockaddr_storage),
-				/* scatter/gather and control info is null */
-			};
-			int count;
-			
-			/* Peek so service can still get the packet */
-			count = recvmsg(ctrl, &header, MSG_PEEK);
-			if (count == -1) {
-				syslog(LOG_ERR,
-				    "failed to get dgram source address: %s; exiting",
-				    strerror(errno));
-				exit(EXIT_FAILURE);
-			}
-			break;
-		}
-		default:
-			DPRINTF(SERV_FMT ": ip_max rate limiting not supported for "
-			    "socktype ", SERV_PARAMS(sep));
-			sep->se_count++;
-			return 0;
-		}
-
-        	if (getnameinfo((struct sockaddr *)&addr, 
-		    addr.ss_len, hbuf,
-		    sizeof(hbuf), NULL, 0, NI_NUMERICHOST)) {
-			/* error, log it and skip ip rate limiting */
-			syslog(LOG_ERR,
-			    SERV_FMT ": failed to get name info of the incoming connection; exiting",
-			    SERV_PARAMS(sep));
-			exit(EXIT_FAILURE);
-		}
-
+	if (sep->se_ip_max != SERVTAB_UNSPEC_SIZE_T) {
+		rl_get_name(sep, ctrl, hbuf);
 		node = rl_try_get_ip(sep, hbuf);
-
 		if(node == NULL) {
 			node = rl_add(sep, hbuf);
 		}
@@ -2756,95 +2724,141 @@ rl_process(struct servtab *sep, int ctrl)
 		    SERV_PARAMS(sep), sep->se_ip_max, node->count);
 		
 		if (node->count >= sep->se_ip_max) {
-			/*
-			 * No need to keep track of requests over the IP
-			 * limit by incrementing since it will just get
-			 * reset by the next time reset anyways 
-			 */
-
 			if (!istimevalid) {
 				/* 
 				 * Only get the clock time if we didn't
 				 * already 
 				 */
 				now = rl_time();
+				istimevalid = true;
 			}
 		
-			if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
+			if (now - sep->se_time > CNT_INTVL) {
 				rl_reset(sep, now);
 				node = rl_add(sep, hbuf);
 			} else {
-				time_fail = IP_MAX_FAIL;
 				if (debug && node->count == sep->se_ip_max) {
 					/* Only log first failed request to prevent
 					DoS attack writing to system log */
 					syslog(LOG_ERR,
 					    SERV_FMT ": max ip spawn rate (%zu in " 
-					    TOSTRING(CNT_INTVL) " seconds) for "
+					    "%zi seconds) for "
 					    "%." TOSTRING(NI_MAXHOST) "s "
-					    "exceeded; service not started",
+					    "already met; service not started",
 					    SERV_PARAMS(sep),
 					    sep->se_ip_max,
+					    (intmax_t)CNT_INTVL,
 					    node->address);
 				}
+
+				DPRINTF(SERV_FMT ": service not started", 
+   				    SERV_PARAMS(sep));
+
+				rl_drop_connection(sep, ctrl);
+				/*
+				 * Increment so debug-syslog message will trigger
+				 * only once 
+				 */
+				node->count++;
+				return -1;
 			}
 		}
-		/* Increment process starts or attempted starts */
 		node->count++;
 	}
 
-	if (time_fail != RL_SUCCESS) {
-
-		DPRINTF(SERV_FMT ": rate-limit exceeded; " 
-		    "service not started", SERV_PARAMS(sep));
-
- 		if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
-			 /* 
-			  * If the fd isn't a listen socket, 
-			  * close the individual connection too. 
-			  */
-			close(ctrl);
-		}
-
-		if (sep->se_socktype == SOCK_DGRAM) {
-			/* 
-			 * Drop the single datagram the service would have
-			 * consumed if nowait. If this is a wait service, this
-			 * will consume 1 datagram, and further received packets
-			 * will be removed in the same process.
-			 */
-			struct msghdr header = {
-				/* All fields null, just consume one message */
-			};
-			int count;
-			
-			count = recvmsg(ctrl, &header, 0);
-			if (count == -1) {
-				syslog(LOG_ERR,
-				    SERV_FMT ": failed to consume nowait dgram: %s",
-				    SERV_PARAMS(sep), strerror(errno));
-				exit(EXIT_FAILURE);
-			}
-		}
-		
-		if(time_fail == SERVICE_MAX_FAIL) {
-			DPRINTF(SERV_FMT ": closing until end of timeout in "
-			    "%zu seconds", SERV_PARAMS(sep), (uintmax_t)RETRYTIME);
-			close_sep(sep);
-			if (!timingout) {
-				timingout = 1;
-				alarm(RETRYTIME);
-			}
-		}
-		
-		return -1;
-	}
+	DPRINTF(SERV_FMT ": running service ", SERV_PARAMS(sep));
 
 	sep->se_count++;
-	return 0;	
+	return 0;
 }
 
-static struct timespec 
+/* Get the remote's IP address in textual form into hbuf of size NI_MAXHOST */
+static void
+rl_get_name(struct servtab *sep, int ctrl, char *hbuf)
+{
+	struct sockaddr_storage addr;
+	socklen_t len = sizeof(struct sockaddr_storage);
+	switch (sep->se_socktype) {
+	case SOCK_STREAM:
+		if (getpeername(ctrl, (struct sockaddr *)&addr, &len)) { 
+			/* error, log it and skip ip rate limiting */
+			syslog(LOG_ERR,
+				SERV_FMT " failed to get peer name of the "
+				"connection", SERV_PARAMS(sep));
+			exit(EXIT_FAILURE);
+		}
+		break;
+	case SOCK_DGRAM: {
+		struct msghdr header = {
+			.msg_name = &addr,
+			.msg_namelen = sizeof(struct sockaddr_storage),
+			/* scatter/gather and control info is null */
+		};
+		int count;
+		
+		/* Peek so service can still get the packet */
+		count = recvmsg(ctrl, &header, MSG_PEEK);
+		if (count == -1) {
+			syslog(LOG_ERR,
+			    "failed to get dgram source address: %s; exiting",
+			    strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+		break;
+	}
+	default:
+		DPRINTF(SERV_FMT ": ip_max rate limiting not supported for "
+		    "socktype", SERV_PARAMS(sep));
+		syslog(LOG_ERR, SERV_FMT ": ip_max rate limiting not supported for "
+		    "socktype", SERV_PARAMS(sep));
+		exit(EXIT_FAILURE);
+	}
+
+	if (getnameinfo((struct sockaddr *)&addr, 
+		addr.ss_len, hbuf,
+		NI_MAXHOST, NULL, 0, NI_NUMERICHOST)) {
+		/* error, log it and skip ip rate limiting */
+		syslog(LOG_ERR,
+		    SERV_FMT ": failed to get name info of the incoming "
+		    "connection; exiting",
+		    SERV_PARAMS(sep));
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void
+rl_drop_connection(struct servtab *sep, int ctrl)
+{
+
+	if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
+		/* 
+		* If the fd isn't a listen socket, 
+		* close the individual connection too. 
+		*/
+		close(ctrl);
+	}  else if (sep->se_socktype == SOCK_DGRAM) {
+		/* 
+		 * Drop the single datagram the service would have
+		 * consumed if nowait. If this is a wait service, this
+		 * will consume 1 datagram, and further received packets
+		 * will be removed in the same way.
+		 */
+		struct msghdr header = {
+			/* All fields null, just consume one message */
+		};
+		int count;
+		
+		count = recvmsg(ctrl, &header, 0);
+		if (count == -1) {
+			syslog(LOG_ERR,
+			    SERV_FMT ": failed to consume nowait dgram: %s",
+			    SERV_PARAMS(sep), strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+	}
+}
+
+static time_t 
 rl_time()
 {
 	struct timespec time;
@@ -2854,7 +2868,7 @@ rl_time()
 		/* Exit inetd if rate limiting fails */
 		exit(EXIT_FAILURE);
 	}
-	return time;
+	return time.tv_sec;
 }
 
 static struct se_ip_list_node*
@@ -2887,10 +2901,10 @@ rl_add(struct servtab *sep, char* ip)
 }
 
 static void
-rl_reset(struct servtab *sep, struct timespec now)
+rl_reset(struct servtab *sep, time_t now)
 {
-	DPRINTF(SERV_FMT ": %zu seconds passed; resetting rate limiting ", 
-	    SERV_PARAMS(sep), (uintmax_t)now.tv_sec - sep->se_time.tv_sec);
+	DPRINTF(SERV_FMT ": %zi seconds passed; resetting rate limiting ", 
+	    SERV_PARAMS(sep), (intmax_t)(now - sep->se_time));
 
 	sep->se_count = 0;
 	sep->se_time = now;
@@ -2915,18 +2929,17 @@ clear_ip_list(struct servtab *sep) {
 static struct se_ip_list_node *
 rl_try_get_ip(struct servtab *sep, char *ip)
 {
-	struct se_ip_list_node *curr = sep->se_ip_list_head; 
+	struct se_ip_list_node *curr; 
 
 	DPRINTF(
 	    SERV_FMT ": look up ip %s for ip_max rate limiting",
-	        SERV_PARAMS(sep), ip);
+	    SERV_PARAMS(sep), ip);
 
-	while (curr != NULL) {
-		if (!strcmp(curr->address, ip)) {
-		/* IP addr match */
+	for (curr = sep->se_ip_list_head; curr != NULL; curr = curr->next) {
+		if (!strncmp(curr->address, ip, NI_MAXHOST)) {
+			/* IP addr match */
 			return curr;
 		}
-		curr = curr->next;
 	}
 	return NULL;
 }

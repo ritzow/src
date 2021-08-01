@@ -164,7 +164,7 @@ struct	servtab {
 					 */
 		char address[NI_MAXHOST];
 	} *se_ip_list_head; 		/* linked list of number of requests per ip */
-	struct	timespec se_time;	/* start of se_count and ip_max counts */
+	time_t se_time;	/* start of se_count and ip_max counts, in seconds from arbitrary point */
 	struct	servtab *se_next;
 };
 
