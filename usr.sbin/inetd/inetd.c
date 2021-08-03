@@ -286,7 +286,9 @@ static struct servtab	*getconfigent(char **);
 __dead static void	goaway(void);
 static void	machtime_dg(int, struct servtab *);
 static void	machtime_stream(int, struct servtab *);
+#ifdef DEBUG_ENABLE
 static void	print_service(const char *, struct servtab *);
+#endif
 static void	reapchild(void);
 static void	retry(void);
 static void	run_service(int, struct servtab *, int);
@@ -767,12 +769,16 @@ config(void)
 			sep->se_rpcversl = cp->se_rpcversl;
 			sep->se_rpcversh = cp->se_rpcversh;
 			freeconfig(cp);
+#ifdef DEBUG_ENABLE
 			if (debug)
 				print_service("REDO", sep);
+#endif
 		} else {
 			sep = enter(cp);
+#ifdef DEBUG_ENABLE
 			if (debug)
 				print_service("ADD ", sep);
+#endif
 		}
 		sep->se_checked = 1;
 
@@ -1979,6 +1985,7 @@ daytime_dg(int s, struct servtab *sep)
 	(void) sendto(s, buffer, len, 0, sa, size);
 }
 
+#ifdef DEBUG_ENABLE
 /*
  * print_service:
  *	Dump relevant information to stderr
@@ -2019,6 +2026,7 @@ print_service(const char *action, struct servtab *sep)
 #endif
 		    );
 }
+#endif
 
 static void
 usage(void)
@@ -2240,7 +2248,9 @@ config_root()
 		sep->se_checked = 0;
 	}
 	defhost = newstr("*");
+#ifdef IPSEC
 	policy = NULL;
+#endif
 	fconfig = NULL;
 	config();
 	purge_unchecked();
@@ -2264,8 +2274,10 @@ purge_unchecked(void)
 			unregister_rpc(sep);
 		if (sep->se_family == AF_LOCAL)
 			(void)unlink(sep->se_service);
+#ifdef DEBUG_ENABLE
 		if (debug)
 			print_service("FREE", sep);
+#endif
 		freeconfig(sep);
 		free(sep);
 	}
@@ -2737,6 +2749,7 @@ rl_process(struct servtab *sep, int ctrl)
 				rl_reset(sep, now);
 				node = rl_add(sep, hbuf);
 			} else {
+#ifdef DEBUG_ENABLE
 				if (debug && node->count == sep->se_ip_max) {
 					/* Only log first failed request to prevent
 					DoS attack writing to system log */
@@ -2750,6 +2763,7 @@ rl_process(struct servtab *sep, int ctrl)
 					    (intmax_t)CNT_INTVL,
 					    node->address);
 				}
+#endif
 
 				DPRINTF(SERV_FMT ": service not started", 
    				    SERV_PARAMS(sep));
