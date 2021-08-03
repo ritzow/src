@@ -2749,7 +2749,6 @@ rl_process(struct servtab *sep, int ctrl)
 				rl_reset(sep, now);
 				node = rl_add(sep, hbuf);
 			} else {
-#ifdef DEBUG_ENABLE
 				if (debug && node->count == sep->se_ip_max) {
 					/* Only log first failed request to prevent
 					DoS attack writing to system log */
@@ -2763,7 +2762,6 @@ rl_process(struct servtab *sep, int ctrl)
 					    (intmax_t)CNT_INTVL,
 					    node->address);
 				}
-#endif
 
 				DPRINTF(SERV_FMT ": service not started", 
    				    SERV_PARAMS(sep));
