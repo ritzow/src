@@ -18,23 +18,24 @@ char	*concat(const char * restrict, const char * restrict);
 void waitfor(pid_t, const char *);
 bool run_udp_client(const char *, const char *, time_t);
 
-ATF_TC(test_ip_ratelimit_wait);
+ATF_TC(test_ratelimit_wait);
 
-ATF_TC_HEAD(test_ip_ratelimit_wait, tc) {
-	atf_tc_set_md_var(tc, "descr", "Test IP rate limiting cases");
+ATF_TC_HEAD(test_ratelimit_wait, tc) {
+	atf_tc_set_md_var(tc, "descr", "Test inetd rate limiting values");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs", "inetd");
-	atf_tc_set_md_var(tc, "require.progs", "gcc");
+	atf_tc_set_md_var(tc, "require.progs", "inetd gcc");
+	/* Time out after 10 seconds, just in case, should only take 6 to complete */
+	atf_tc_set_md_var(tc, "timeout", "10");
 }
 
-ATF_TC_BODY(test_ip_ratelimit_wait, tc) {
+ATF_TC_BODY(test_ratelimit_wait, tc) {
 	pid_t proc = run("gcc", (char*[]) {
 		"gcc", concat(atf_tc_get_config_var(tc, "srcdir"), "/udpserver.c"),
 		"-o", "udpserver",
 		NULL
 	});
 
-	waitfor(proc, "Test server compilation");
+	waitfor(proc, "gcc test server compilation");
 
 	proc = run("inetd", (char*[]) {
 		"inetd", "-d",
@@ -42,7 +43,7 @@ ATF_TC_BODY(test_ip_ratelimit_wait, tc) {
 		NULL
 	});
 
-	/* Wait for inetd to load the server */
+	/* Wait for inetd to load services */
 	CHECK_ERROR(sleep(1));
 
 	/* ip_max of 3, should receive these 3 responses */
@@ -53,13 +54,25 @@ ATF_TC_BODY(test_ip_ratelimit_wait, tc) {
 	/* Rate limiting should prevent a response to this request */
 	ATF_REQUIRE(!run_udp_client("127.0.0.1", "5432", 1));
 
+	/* Test ip_max of 0 */
+	ATF_REQUIRE(!run_udp_client("127.0.0.1", "5433", 1));
+
+	/* Test service_max of 2 */
+	ATF_REQUIRE(run_udp_client("127.0.0.1", "5434", 1));
+	ATF_REQUIRE(run_udp_client("127.0.0.1", "5434", 1));
+	ATF_REQUIRE(!run_udp_client("127.0.0.1", "5434", 1));
+
+	/* Test service_max of 0 */
+	ATF_REQUIRE(!run_udp_client("127.0.0.1", "5435", 1));
+
+	/* Exit inetd */
 	CHECK_ERROR(kill(proc, SIGTERM));
 
-	waitfor(proc, "Inetd execution");
+	waitfor(proc, "inetd");
 }
 
 ATF_TP_ADD_TCS(tp) {
-	ATF_TP_ADD_TC(tp, test_ip_ratelimit_wait);
+	ATF_TP_ADD_TC(tp, test_ratelimit_wait);
 }
 
 #define UDP 17
@@ -77,6 +90,7 @@ bool run_udp_client(const char *address, const char *port, time_t timeout_sec) {
 	ATF_REQUIRE_EQ_MSG(error = getaddrinfo(address, port, &hints, &res), 0, 
 	    "%s", gai_strerror(error));
 
+	/* Make sure there is only one possible bind address */
 	ATF_REQUIRE(res->ai_next == NULL);
 
 	char buffer[] = "test";
