@@ -9,9 +9,7 @@ TESTSDIR=               ${TESTSBASE}/usr.sbin/inetd
 
 TESTS_C += t_inetd
 
-#TESTS_SH += t_ratelimit
-
 FILESDIR= ${TESTSDIR}
-FILES=udpserver.c inetd_ratelimit.conf
+FILES=test_server.c inetd_ratelimit.conf
 
 .include <bsd.test.mk>

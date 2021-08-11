@@ -5,33 +5,42 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netdb.h>
 
 #define CHECK_ERROR(expr) ATF_REQUIRE_MSG((expr) != -1,\
-    "Unexpected failure: %s", strerror(errno))
+    "%s", strerror(errno))
 
-pid_t run(const char *, char **);
-char	*concat(const char * restrict, const char * restrict);
-void waitfor(pid_t, const char *);
-bool run_udp_client(const char *, const char *, time_t);
+#define TCP 6
+#define UDP 17
 
-ATF_TC(test_ratelimit_wait);
+static pid_t	run(const char *, char **);
+static char	*concat(const char * restrict, const char * restrict);
+static void	waitfor(pid_t, const char *);
+static bool	run_udp_client(const char *);
+static int	create_socket(const char *, const char *, int, int, time_t, struct sockaddr_storage *);
+static bool	run_tcp_client(const char *);
 
-ATF_TC_HEAD(test_ratelimit_wait, tc) {
+/* This test should take around 5 to 7 seconds to complete. */
+ATF_TC(test_ratelimit);
+
+ATF_TC_HEAD(test_ratelimit, tc)
+{
 	atf_tc_set_md_var(tc, "descr", "Test inetd rate limiting values");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.progs", "inetd gcc");
-	/* Time out after 10 seconds, just in case, should only take 6 to complete */
+	/* Time out after 10 seconds, just in case */
 	atf_tc_set_md_var(tc, "timeout", "10");
 }
 
-ATF_TC_BODY(test_ratelimit_wait, tc) {
+ATF_TC_BODY(test_ratelimit, tc)
+{
 	pid_t proc = run("gcc", (char*[]) {
-		"gcc", concat(atf_tc_get_config_var(tc, "srcdir"), "/udpserver.c"),
-		"-o", "udpserver",
+		"gcc", concat(atf_tc_get_config_var(tc, "srcdir"), "/test_server.c"),
+		"-o", "testserver",
 		NULL
 	});
 
@@ -46,24 +55,51 @@ ATF_TC_BODY(test_ratelimit_wait, tc) {
 	/* Wait for inetd to load services */
 	CHECK_ERROR(sleep(1));
 
-	/* ip_max of 3, should receive these 3 responses */
-	for(int i = 0; i < 3; i++) {
-		ATF_REQUIRE(run_udp_client("127.0.0.1", "5432", 1));
+	/* TODO test dgram/nowait? Specified in manpage but doesn't seem to work */
+
+	/* dgram/wait ip_max of 3, should receive these 3 responses */
+	for (int i = 0; i < 3; i++) {
+		ATF_REQUIRE(run_udp_client("5432"));
 	}
 	
 	/* Rate limiting should prevent a response to this request */
-	ATF_REQUIRE(!run_udp_client("127.0.0.1", "5432", 1));
+	ATF_REQUIRE(!run_udp_client("5432"));	
 
-	/* Test ip_max of 0 */
-	ATF_REQUIRE(!run_udp_client("127.0.0.1", "5433", 1));
+	/* dgram/wait ip_max of 0 */
+	ATF_REQUIRE(!run_udp_client("5433"));
 
-	/* Test service_max of 2 */
-	ATF_REQUIRE(run_udp_client("127.0.0.1", "5434", 1));
-	ATF_REQUIRE(run_udp_client("127.0.0.1", "5434", 1));
-	ATF_REQUIRE(!run_udp_client("127.0.0.1", "5434", 1));
+	/* dgram/wait service_max of 2 */
+	ATF_REQUIRE(run_udp_client("5434"));
+	ATF_REQUIRE(run_udp_client("5434"));
+	ATF_REQUIRE(!run_udp_client("5434"));
 
-	/* Test service_max of 0 */
-	ATF_REQUIRE(!run_udp_client("127.0.0.1", "5435", 1));
+	/* dgram/wait service_max of 0 */
+	ATF_REQUIRE(!run_udp_client("5435"));
+
+	/* stream/wait service_max of 2 */
+	ATF_REQUIRE(run_tcp_client("5434"));
+	ATF_REQUIRE(run_tcp_client("5434"));
+	ATF_REQUIRE(!run_tcp_client("5434"));
+
+	/* stream/wait service_max of 0 */
+	ATF_REQUIRE(!run_tcp_client("5435"));
+
+	/* stream/nowait ip_max of 3 */
+	for (int i = 0; i < 3; i++) {
+		ATF_REQUIRE(run_tcp_client("5436"));
+	}
+	ATF_REQUIRE(!run_tcp_client("5436"));
+
+	/* stream/nowait ip_max of 0 */
+	ATF_REQUIRE(!run_tcp_client("5437"));
+
+	/* dgram/wait service_max of 2 */
+	ATF_REQUIRE(run_tcp_client("5438"));
+	ATF_REQUIRE(run_tcp_client("5438"));
+	ATF_REQUIRE(!run_tcp_client("5438"));
+
+	/* dgram/wait service_max of 0 */
+	ATF_REQUIRE(!run_tcp_client("5439"));
 
 	/* Exit inetd */
 	CHECK_ERROR(kill(proc, SIGTERM));
@@ -71,37 +107,22 @@ ATF_TC_BODY(test_ratelimit_wait, tc) {
 	waitfor(proc, "inetd");
 }
 
-ATF_TP_ADD_TCS(tp) {
-	ATF_TP_ADD_TC(tp, test_ratelimit_wait);
+ATF_TP_ADD_TCS(tp)
+{
+	ATF_TP_ADD_TC(tp, test_ratelimit);
 }
 
-#define UDP 17
-
-/* Return: true if successfully received message */
-bool run_udp_client(const char *address, const char *port, time_t timeout_sec) {
-	struct addrinfo hints = {
-		.ai_flags = AI_NUMERICHOST,
-		.ai_socktype = SOCK_DGRAM,
-		.ai_protocol = UDP
-	};
-	struct addrinfo * res;
-	int error;
-
-	ATF_REQUIRE_EQ_MSG(error = getaddrinfo(address, port, &hints, &res), 0, 
-	    "%s", gai_strerror(error));
-
-	/* Make sure there is only one possible bind address */
-	ATF_REQUIRE(res->ai_next == NULL);
-
+/* Return: true if successfully received message, false if timeout */
+static bool 
+run_udp_client(const char *port)
+{
 	char buffer[] = "test";
+	struct sockaddr_storage addr;
 
-	int udp;
-	CHECK_ERROR(udp = socket(res->ai_family, 
-	    res->ai_socktype, res->ai_protocol));
-	struct timeval timeout = { timeout_sec };
-	setsockopt(udp, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+	int udp = create_socket("127.0.0.1", port, SOCK_DGRAM, UDP, 1, &addr);
+
 	CHECK_ERROR(sendto(udp, buffer, sizeof(buffer), 0, 
-	    res->ai_addr, res->ai_addrlen));
+	    (struct sockaddr *)&addr, addr.ss_len));
 
 	struct iovec iov = {
 		.iov_base = buffer,
@@ -109,8 +130,8 @@ bool run_udp_client(const char *address, const char *port, time_t timeout_sec) {
 	};
 
 	struct msghdr msg = {
-		.msg_name = res->ai_addr,
-		.msg_namelen = res->ai_addrlen,
+		.msg_name = &addr,
+		.msg_namelen = addr.ss_len, /* is this correct? */
 		.msg_iov = &iov,
 		.msg_iovlen = 1
 	};
@@ -120,11 +141,88 @@ bool run_udp_client(const char *address, const char *port, time_t timeout_sec) {
 	};
 	
 	ssize_t count = recvmsg(udp, &msg, 0);
-	freeaddrinfo(res);
-	return count > 0;
+	if (count == -1) {
+		if (errno == EAGAIN) {
+			/* Timed out, return false */
+			CHECK_ERROR(close(udp));
+			return false;
+		} else {
+			/* All other errors fatal */
+			CHECK_ERROR(-1);
+		}
+	}
+	CHECK_ERROR(close(udp));
+	return true;
 }
 
-pid_t run(const char * prog, char **args) {
+/* Run localhost tcp echo, return true if successful, false if timeout/disconnect */
+static bool
+run_tcp_client(const char *port)
+{
+	char buffer[] = "test";
+	struct sockaddr_storage remote;
+	int tcp = create_socket("127.0.0.1", port, SOCK_STREAM, TCP, 1, &remote);
+	CHECK_ERROR(connect(tcp, (const struct sockaddr *)&remote, remote.ss_len));
+	CHECK_ERROR(send(tcp, buffer, sizeof(buffer), 0));
+	//memset(buffer, '\0', __arraylength(buffer));
+	ssize_t count;
+	count = recv(tcp, buffer, sizeof(buffer), 0);
+	if (count == -1) {
+		/* 
+		 * Connection reset by peer indicates the connection was
+		 * dropped. EAGAIN indicates the timeout expired. Any other
+		 * error is unexpected for this client program test.
+		 */
+		if(errno == ECONNRESET || errno == EAGAIN) {
+			return false;
+		} else {
+			CHECK_ERROR(-1);
+			return false;
+		}
+	}
+
+	if (count == 0) {
+		/* socket was shutdown by inetd, no more data available */
+		return false;
+	}
+	return true;
+}
+
+/* 
+ * Create a socket with the characteristics inferred by the args, return parsed 
+ * socket address in dst.
+ */
+static int
+create_socket(const char *address, const char *port, 
+    int socktype, int proto, time_t timeout_sec, struct sockaddr_storage *dst)
+{
+        struct addrinfo hints = {
+		.ai_flags = AI_NUMERICHOST,
+		.ai_socktype = socktype,
+		.ai_protocol = proto
+	};
+	struct addrinfo * res;
+	int error, fd;
+
+	ATF_REQUIRE_EQ_MSG(error = getaddrinfo(address, port, &hints, &res), 0, 
+	    "%s", gai_strerror(error));
+
+	/* Make sure there is only one possible bind address */
+	ATF_REQUIRE_MSG(res->ai_next == NULL, "Ambiguous create_socket args");
+	CHECK_ERROR(fd = socket(res->ai_family, 
+	    res->ai_socktype, res->ai_protocol));
+	struct timeval timeout = { timeout_sec };
+	CHECK_ERROR(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, 
+	    sizeof(timeout)));
+	memcpy(dst, res->ai_addr, res->ai_addrlen);
+	freeaddrinfo(res);
+	return fd;
+}
+
+/* Run program with args */
+static pid_t
+run(const char * prog, char **args)
+{
 	pid_t proc;
 	extern char **environ;
 	ATF_REQUIRE_EQ(posix_spawnp(&proc, prog, 
@@ -132,7 +230,10 @@ pid_t run(const char * prog, char **args) {
 	return proc;
 }
 
-void waitfor(pid_t pid, const char * taskname) {
+/* Wait for a process to exit, check return value */
+static void
+waitfor(pid_t pid, const char * taskname)
+{
 	int status;
 	CHECK_ERROR(waitpid(pid, &status, WALLSIG) == pid);
 
@@ -141,7 +242,10 @@ void waitfor(pid_t pid, const char * taskname) {
 	    "exit status %d", taskname, WEXITSTATUS(status));
 }
 
-char * concat(const char * restrict left, const char * restrict right) {
+/* Concatenate two const strings, do not free arguments */
+static char *
+concat(const char * restrict left, const char * restrict right)
+{
 	size_t len = strlen(left);
 	char * storage = malloc(len + strlen(right) + 1);
 	strcpy(storage, left);
