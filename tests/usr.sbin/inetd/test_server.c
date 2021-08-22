@@ -1,18 +1,18 @@
 #include <sys/socket.h>
+#include <unistd.h>
 #include <netdb.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
-#include <syslog.h>
 #include <stdlib.h>
+#include <err.h>
 
 #define CHECK(expr) do {\
 	if ((expr) == -1) {\
-		syslog(LOG_ERR, "Error at %s:%d: %s", \
+		err(EXIT_FAILURE, "Error at %s:%d: %s", \
 		    __FILE__, __LINE__, \
 		    strerror(errno));\
-		exit(1);\
 	}\
 } while(0);
 
@@ -23,10 +23,8 @@ static void dgram_wait_service(void);
 int
 main(int argc, char **argv)
 {
-	openlog("inetd_test_server", LOG_PID | LOG_NOWAIT, LOG_DAEMON);
-
 	if (argc < 3) {
-		syslog(LOG_ERR, "Invalid arg count");
+		err(EXIT_FAILURE, "Invalid arg count");
 	}
 
 	/* Run the correct service according to the args */
@@ -34,7 +32,7 @@ main(int argc, char **argv)
 		if (strcmp(argv[2], "wait") == 0) {
 			dgram_wait_service();
 		} else {
-			syslog(LOG_ERR, "Invalid arg %s", argv[2]);
+			err(EXIT_FAILURE, "Invalid arg %s", argv[2]);
 		}
 	} else if (strcmp(argv[1], "stream") == 0) {
 		if (strcmp(argv[2], "wait") == 0) {
@@ -42,10 +40,10 @@ main(int argc, char **argv)
 		} else if (strcmp(argv[2], "nowait") == 0) { 
 			stream_nowait_service();
 		} else {
-			syslog(LOG_ERR, "Invalid arg %s", argv[2]);
+			err(EXIT_FAILURE, "Invalid arg %s", argv[2]);
 		}
 	} else {
-		syslog(LOG_ERR, "Invalid args %s %s", argv[1], argv[2]);
+		err(EXIT_FAILURE, "Invalid args %s %s", argv[1], argv[2]);
 	}
 	return 0;
 }
@@ -108,8 +106,7 @@ dgram_wait_service()
 	    NULL, 0, NI_NUMERICHOST);
 	
 	if (error) {
-		syslog(LOG_ERR, "getnameinfo error: %s\n", gai_strerror(error));
-		return;
+		err(EXIT_FAILURE, "getnameinfo error: %s\n", gai_strerror(error));
 	}
 	//syslog(LOG_ERR, "Received message \"%s\" from %s\n", buffer, name);
 }

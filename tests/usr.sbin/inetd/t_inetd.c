@@ -1,12 +1,12 @@
 #include <atf-c.h>
 #include <spawn.h>
-#include <sys/wait.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-
+#include <err.h>
+#include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -29,27 +29,30 @@ ATF_TC(test_ratelimit);
 
 ATF_TC_HEAD(test_ratelimit, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "Test inetd rate limiting values");
+	atf_tc_set_md_var(tc, "descr", "Test inetd rate limiting values, "
+	"uses UDP/TCP ports 5432-5439 with localhost.");
+	/* Need to run as root so inetd can set uid */
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs", "inetd gcc");
+	atf_tc_set_md_var(tc, "require.progs", "inetd");
 	/* Time out after 10 seconds, just in case */
 	atf_tc_set_md_var(tc, "timeout", "10");
 }
 
 ATF_TC_BODY(test_ratelimit, tc)
 {
-	pid_t proc = run("gcc", (char*[]) {
-		"gcc", concat(atf_tc_get_config_var(tc, "srcdir"), "/test_server.c"),
-		"-o", "testserver",
-		NULL
-	});
+	pid_t proc;
 
-	waitfor(proc, "gcc test server compilation");
-
+	/* Copy test server to relative path used in inetd_ratelimit.conf */
+	atf_utils_copy_file(
+	    concat(atf_tc_get_config_var(tc, "srcdir"), "/test_server"),
+	    "test_server"
+	);
+	
+	/* Run inetd in debug mode using specified config file */
 	proc = run("inetd", (char*[]) {
-		"inetd", "-d",
-		concat(atf_tc_get_config_var(tc, "srcdir"), "/inetd_ratelimit.conf"),
-		NULL
+	    "inetd", "-d",
+	    concat(atf_tc_get_config_var(tc, "srcdir"), "/inetd_ratelimit.conf"),
+	    NULL
 	});
 
 	/* Wait for inetd to load services */
@@ -112,7 +115,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ratelimit);
 }
 
-/* Return: true if successfully received message, false if timeout */
+/* Return true if successfully received message, false if timeout */
 static bool 
 run_udp_client(const char *port)
 {
@@ -159,13 +162,14 @@ run_udp_client(const char *port)
 static bool
 run_tcp_client(const char *port)
 {
-	char buffer[] = "test";
 	struct sockaddr_storage remote;
-	int tcp = create_socket("127.0.0.1", port, SOCK_STREAM, TCP, 1, &remote);
+	ssize_t count;
+	int tcp;
+	char buffer[] = "test";
+	
+	tcp = create_socket("127.0.0.1", port, SOCK_STREAM, TCP, 1, &remote);
 	CHECK_ERROR(connect(tcp, (const struct sockaddr *)&remote, remote.ss_len));
 	CHECK_ERROR(send(tcp, buffer, sizeof(buffer), 0));
-	//memset(buffer, '\0', __arraylength(buffer));
-	ssize_t count;
 	count = recv(tcp, buffer, sizeof(buffer), 0);
 	if (count == -1) {
 		/* 
