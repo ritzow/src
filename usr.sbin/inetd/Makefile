@@ -16,7 +16,7 @@ CPPFLAGS+=-DDEBUG_ENABLE
 CPPFLAGS+=-DLIBWRAP
 # Use LIBWRAP_INTERNAL for libwrap checking of inetd's `internal' services.
 #CPPFLAGS+=-DLIBWRAP_INTERNAL
-LDADD+= -lwrap -lblacklist -lutil
+LDADD+= -lwrap -lblocklist -lutil
 DPADD+= ${LIBWRAP} ${LIBBLOCKLIST} ${LIBUTIL}
 
 .if (${USE_INET6} != "no")
