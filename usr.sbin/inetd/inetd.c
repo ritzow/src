@@ -2867,6 +2867,9 @@ rl_drop_connection(struct servtab *sep, int ctrl)
 			    SERV_PARAMS(sep), strerror(errno));
 			exit(EXIT_FAILURE);
 		}
+
+		DPRINTF(SERV_FMT ": dropped dgram message", 
+		    SERV_PARAMS(sep));
 	}
 }
 
