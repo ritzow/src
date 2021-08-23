@@ -6,13 +6,14 @@
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
-#include <err.h>
+#include <syslog.h>
 
 #define CHECK(expr) do {\
 	if ((expr) == -1) {\
-		err(EXIT_FAILURE, "Error at %s:%d: %s", \
+		syslog(LOG_ERR, "Error at %s:%d: %s", \
 		    __FILE__, __LINE__, \
 		    strerror(errno));\
+		exit(EXIT_FAILURE);\
 	}\
 } while(0);
 
@@ -23,8 +24,12 @@ static void dgram_wait_service(void);
 int
 main(int argc, char **argv)
 {
+
+	openlog("inetd_test_server", LOG_PID | LOG_NOWAIT, LOG_DAEMON);
+
 	if (argc < 3) {
-		err(EXIT_FAILURE, "Invalid arg count");
+		syslog(LOG_ERR, "Invalid arg count");
+		exit(EXIT_FAILURE);
 	}
 
 	/* Run the correct service according to the args */
@@ -32,7 +37,8 @@ main(int argc, char **argv)
 		if (strcmp(argv[2], "wait") == 0) {
 			dgram_wait_service();
 		} else {
-			err(EXIT_FAILURE, "Invalid arg %s", argv[2]);
+			syslog(LOG_ERR, "Invalid arg %s", argv[2]);
+			exit(EXIT_FAILURE);
 		}
 	} else if (strcmp(argv[1], "stream") == 0) {
 		if (strcmp(argv[2], "wait") == 0) {
@@ -40,10 +46,12 @@ main(int argc, char **argv)
 		} else if (strcmp(argv[2], "nowait") == 0) { 
 			stream_nowait_service();
 		} else {
-			err(EXIT_FAILURE, "Invalid arg %s", argv[2]);
+			syslog(LOG_ERR, "Invalid arg %s", argv[2]);
+			exit(EXIT_FAILURE);
 		}
 	} else {
-		err(EXIT_FAILURE, "Invalid args %s %s", argv[1], argv[2]);
+		syslog(LOG_ERR, "Invalid args %s %s", argv[1], argv[2]);
+		exit(EXIT_FAILURE);
 	}
 	return 0;
 }
@@ -54,6 +62,8 @@ stream_nowait_service()
 	ssize_t count;
 	char buffer[10];
 	CHECK(count = recv(0, buffer, sizeof(buffer), 0));
+	syslog(LOG_WARNING, "Received stream/nowait message \"%.*s\"\n",
+	    count, buffer);
 	CHECK(send(1, buffer, count, 0));
 }
 
@@ -68,6 +78,8 @@ stream_wait_service()
 
 	CHECK(fd = accept(0, (struct sockaddr*)&addr, &addr_len));
 	CHECK(count = recv(fd, buffer, sizeof(buffer), 0));
+	syslog(LOG_WARNING, "Received stream/wait message \"%.*s\"\n",
+	    count, buffer);
 	CHECK(send(fd, buffer, count, 0));
 	CHECK(shutdown(fd, SHUT_RDWR));
 	CHECK(close(fd));
@@ -106,7 +118,9 @@ dgram_wait_service()
 	    NULL, 0, NI_NUMERICHOST);
 	
 	if (error) {
-		err(EXIT_FAILURE, "getnameinfo error: %s\n", gai_strerror(error));
+		syslog(LOG_ERR, "getnameinfo error: %s\n", gai_strerror(error));
+		exit(EXIT_FAILURE);
 	}
-	//syslog(LOG_ERR, "Received message \"%s\" from %s\n", buffer, name);
+	syslog(LOG_WARNING, "Received dgram/wait message \"%.*s\" from %s\n", 
+	    count, buffer, name);
 }
